@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>GAIA-MAGNETICS</title>
+
+  <!-- Favicon -->
+  <link rel="icon" type="image/png" href="images/favicon.png" />
+
+  <!-- Font -->
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@700;900&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="style.css" />
+</head>
+
+<body>
+
+  <!-- Header -->
+  <div class="header">
+    <div class="brand-left">
+      <div class="geodev">GEODEV</div>
+    </div>
+    <div class="gaia">GAIA-MAGNETICS</div>
+  </div>
+
+  <!-- Main -->
+  <div class="main">
+
+    <!-- LEFT: Controls -->
+    <div class="panel">
+
+      <div class="section">
+        <h3>Upload CSV</h3>
+        <input type="file" id="csvFile" accept=".csv" />
+      </div>
+
+      <div class="section">
+        <h3>Scenario</h3>
+        <select id="scenario">
+          <option value="sparse_only">Sparse only</option>
+          <option value="explicit_geometry">Explicit geometry</option>
+        </select>
+      </div>
+
+      <div class="section">
+        <h3>Column Mapping</h3>
+
+        <label>X column</label>
+        <select id="xColumn"></select>
+
+        <label>Y column</label>
+        <select id="yColumn"></select>
+
+        <label>Value column</label>
+        <select id="valueColumn"></select>
+      </div>
+
+      <div class="section">
+        <h3>Output spacing (meters)</h3>
+        <input type="number" id="spacing" value="10" />
+      </div>
+
+      <button type="button" id="createJobBtn">Create Job</button>
+      <button id="plotBtn" disabled>Plot Stations vs Values</button>
+
+      <div id="jobStatus"></div>
+      <a id="downloadBtn"></a>
+    </div>
+
+    <!-- RIGHT: Visualization -->
+    <div id="visualization">
+      <svg id="geometry-svg" viewBox="0 0 1000 600"></svg>
+
+      <canvas
+        id="valueChart"
+        width="1000"
+        height="400"
+        style="display:none; margin-top:20px; border:1px solid #222;"
+      ></canvas>
+    </div>
+
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

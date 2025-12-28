@@ -1,0 +1,122 @@
+body {
+  margin: 0;
+  font-family: Arial, sans-serif;
+  background: #0e0e0e;
+  color: #ffffff;
+}
+
+/* ---------- Header ---------- */
+.header {
+  display: flex;
+  align-items: center;
+  padding: 18px 28px;
+  border-bottom: 1px solid #222;
+  position: relative;
+}
+
+.brand-left {
+  display: flex;
+  align-items: center;
+}
+
+.geodev {
+  font-family: 'Orbitron', sans-serif;
+  font-size: 30px;
+  font-weight: 900;
+  letter-spacing: 3px;
+}
+
+.gaia {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: 4px;
+}
+
+/* ---------- Main layout ---------- */
+.main {
+  display: grid;
+  grid-template-columns: 380px 1fr;
+  height: calc(100vh - 72px);
+}
+
+/* ---------- Left panel ---------- */
+.panel {
+  padding: 20px;
+  border-right: 1px solid #222;
+  overflow-y: auto;
+}
+
+.section {
+  margin-bottom: 22px;
+}
+
+.section h3 {
+  margin: 0 0 10px;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: #aaa;
+}
+
+label {
+  display: block;
+  font-size: 13px;
+  margin-bottom: 6px;
+}
+
+input, select {
+  width: 100%;
+  padding: 8px;
+  margin-bottom: 10px;
+  background: #111;
+  color: #fff;
+  border: 1px solid #333;
+}
+
+button {
+  width: 100%;
+  padding: 10px;
+  background: #1f6feb;
+  color: #fff;
+  border: none;
+  cursor: pointer;
+  font-weight: 600;
+  margin-top: 10px;
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+#jobStatus {
+  margin-top: 14px;
+  font-size: 13px;
+  color: #9aa4b2;
+  text-align: center;
+}
+
+#downloadBtn {
+  display: none;
+  margin-top: 10px;
+  text-align: center;
+  color: #1f6feb;
+  font-size: 13px;
+  text-decoration: none;
+  font-weight: 600;
+}
+
+/* ---------- Visualization ---------- */
+#visualization {
+  padding: 16px;
+}
+
+svg {
+  width: 100%;
+  height: 100%;
+  background: #0e0e0e;
+  border-left: 1px solid #222;
+}

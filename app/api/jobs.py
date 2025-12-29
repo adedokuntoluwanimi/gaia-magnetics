@@ -3,6 +3,7 @@ from fastapi.responses import StreamingResponse
 import uuid
 import tempfile
 import os
+from typing import Optional
 
 from app.core.job_runner import JobRunner
 from app.core.s3_io import S3IO
@@ -17,7 +18,8 @@ def create_job(
     y_col: str = Form(...),
     tmi_col: str = Form(...),
     scenario: str = Form(...),
-    station_spacing: float | None = Form(None),
+    station_spacing: Optional[float] = Form(None),
+
 ):
     job_id = f"gaia-{uuid.uuid4().hex[:12]}"
 

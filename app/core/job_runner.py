@@ -3,6 +3,8 @@ import tempfile
 import csv
 from datetime import datetime
 from typing import Dict
+from typing import Dict, Optional
+
 
 from app.core.csv_splitter import (
     read_csv,
@@ -25,7 +27,7 @@ class JobRunner:
         x_col: str,
         y_col: str,
         tmi_col: str,
-        station_spacing: float | None,
+        station_spacing: Optional[float],
     ) -> Dict:
         # ----------------------------------
         # 1. Read CSV

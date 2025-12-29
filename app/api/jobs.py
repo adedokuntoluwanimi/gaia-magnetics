@@ -5,6 +5,7 @@ from fastapi import APIRouter, UploadFile, File, Form, HTTPException
 from app.schemas.job import JobCreateResponse
 from app.core.models import JobStatus
 from app.core.job_runner import JobRunner
+from typing import Optional
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 
@@ -16,7 +17,8 @@ def create_job(
     x_column: str = Form(...),
     y_column: str = Form(...),
     tmi_column: str = Form(...),
-    station_spacing: float | None = Form(None),
+    station_spacing: Optional[float] = Form(None),
+
 ):
     # -----------------------------
     # Validate scenario rules

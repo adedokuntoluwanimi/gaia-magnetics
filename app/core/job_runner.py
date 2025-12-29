@@ -1,10 +1,8 @@
+import csv
 import json
 import tempfile
-import csv
 from datetime import datetime
-from typing import Dict
-from typing import Dict, Optional
-
+from typing import Dict, Optional, List
 
 from app.core.csv_splitter import (
     read_csv,
@@ -12,12 +10,26 @@ from app.core.csv_splitter import (
     split_sparse_geometry,
 )
 from app.core.s3_io import S3IO
-from app.core.models import JobStatus
+from app.core.inference import SageMakerInference
+from app.core.merge import (
+    merge_measured_and_predicted,
+    read_predictions_csv,
+    write_final_csv,
+)
 
 
 class JobRunner:
+    """
+    Orchestrates a single GAIA Magnetics job.
+
+    Assumptions (LOCKED):
+    - One CSV = one traverse
+    - Geometry is 1D along traverse
+    """
+
     def __init__(self):
         self.s3 = S3IO()
+        self.bucket = self.s3.bucket
 
     def run(
         self,
@@ -29,9 +41,10 @@ class JobRunner:
         tmi_col: str,
         station_spacing: Optional[float],
     ) -> Dict:
-        # ----------------------------------
-        # 1. Read CSV
-        # ----------------------------------
+
+        # --------------------------------------------------
+        # 1. Read uploaded CSV
+        # --------------------------------------------------
         rows = read_csv(
             file_path=csv_path,
             x_col=x_col,
@@ -39,9 +52,9 @@ class JobRunner:
             tmi_col=tmi_col,
         )
 
-        # ----------------------------------
+        # --------------------------------------------------
         # 2. Split geometry
-        # ----------------------------------
+        # --------------------------------------------------
         if scenario == "explicit":
             train_rows, predict_rows = split_explicit_geometry(rows)
 
@@ -53,13 +66,12 @@ class JobRunner:
                 rows=rows,
                 spacing=station_spacing,
             )
-
         else:
             raise ValueError(f"Unknown scenario: {scenario}")
 
-        # ----------------------------------
-        # 3. Write files locally (temp)
-        # ----------------------------------
+        # --------------------------------------------------
+        # 3. Write temporary CSVs
+        # --------------------------------------------------
         with tempfile.TemporaryDirectory() as tmp:
             original_path = f"{tmp}/original.csv"
             train_path = f"{tmp}/train.csv"
@@ -76,16 +88,13 @@ class JobRunner:
                 "station_spacing": station_spacing,
                 "train_count": len(train_rows),
                 "predict_count": len(predict_rows),
-                "status": JobStatus.SUBMITTED,
                 "created_at": datetime.utcnow().isoformat(),
             }
 
             with open(metadata_path, "w", encoding="utf-8") as f:
                 json.dump(metadata, f, indent=2)
 
-            # ----------------------------------
-            # 4. Upload to S3
-            # ----------------------------------
+            # Upload inputs
             self.s3.upload_file(
                 original_path,
                 self.s3.input_path(job_id, "original.csv"),
@@ -103,38 +112,84 @@ class JobRunner:
                 f"{self.s3.job_prefix(job_id)}metadata.json",
             )
 
+        # --------------------------------------------------
+        # 4. Inference (predict only)
+        # --------------------------------------------------
+        inference = SageMakerInference(
+            endpoint_name="gaia-xgb-endpoint",
+            region="us-east-1",
+        )
+
+        inference.run_from_s3(
+            bucket=self.bucket,
+            predict_key=self.s3.split_path(job_id, "predict.csv"),
+            output_key=f"{self.s3.job_prefix(job_id)}predictions/predictions.csv",
+        )
+
+        # --------------------------------------------------
+        # 5. Merge results
+        # --------------------------------------------------
+        with tempfile.TemporaryDirectory() as tmp:
+            original_local = f"{tmp}/original.csv"
+            predictions_local = f"{tmp}/predictions.csv"
+            final_local = f"{tmp}/final.csv"
+
+            self.s3.download_file(
+                self.s3.input_path(job_id, "original.csv"),
+                original_local,
+            )
+            self.s3.download_file(
+                f"{self.s3.job_prefix(job_id)}predictions/predictions.csv",
+                predictions_local,
+            )
+
+            original_rows = self._read_original_with_flags(original_local)
+            predicted_values = read_predictions_csv(predictions_local)
+
+            final_rows = merge_measured_and_predicted(
+                original_rows=original_rows,
+                predicted_values=predicted_values,
+            )
+
+            write_final_csv(final_rows, final_local)
+
+            self.s3.upload_file(
+                final_local,
+                f"{self.s3.job_prefix(job_id)}final/final.csv",
+            )
+
         return {
-            "status": JobStatus.SUBMITTED,
+            "job_id": job_id,
+            "status": "COMPLETED",
             "train_count": len(train_rows),
             "predict_count": len(predict_rows),
+            "final_csv": f"{self.s3.job_prefix(job_id)}final/final.csv",
         }
 
-    # ----------------------------------
-    # Writers
-    # ----------------------------------
+    # --------------------------------------------------
+    # Helpers
+    # --------------------------------------------------
     def _write_original(self, src: str, dst: str) -> None:
         with open(src, "r", encoding="utf-8") as f_src, open(
             dst, "w", encoding="utf-8"
         ) as f_dst:
             f_dst.write(f_src.read())
 
-    def _write_train(self, rows, path: str) -> None:
+    def _write_train(self, rows: List[Dict], path: str) -> None:
         if not rows:
             return
-
         with open(path, "w", newline="", encoding="utf-8") as f:
             writer = csv.DictWriter(
                 f,
-                fieldnames=["x", "y", "tmi", "d_along"],
+                fieldnames=["x", "y", "d_along", "tmi"],
             )
             writer.writeheader()
             for r in rows:
                 writer.writerow(r)
 
-    def _write_predict(self, rows, path: str) -> None:
+    def _write_predict(self, rows: List[Dict], path: str) -> None:
         if not rows:
             return
-
         with open(path, "w", newline="", encoding="utf-8") as f:
             writer = csv.DictWriter(
                 f,
@@ -143,3 +198,41 @@ class JobRunner:
             writer.writeheader()
             for r in rows:
                 writer.writerow(r)
+
+    def _read_original_with_flags(self, path: str) -> List[Dict]:
+        """
+        Re-read original CSV and compute d_along + is_measured.
+        One file = one traverse.
+        """
+
+        rows = []
+        d_accum = 0.0
+        prev_x, prev_y = None, None
+
+        with open(path, "r", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+
+            for r in reader:
+                x = float(r["x"])
+                y = float(r["y"])
+
+                if prev_x is not None:
+                    dx = x - prev_x
+                    dy = y - prev_y
+                    d_accum += (dx ** 2 + dy ** 2) ** 0.5
+
+                prev_x, prev_y = x, y
+
+                tmi_raw = r.get("tmi")
+                is_measured = 1 if tmi_raw not in (None, "", "nan") else 0
+
+                rows.append({
+                    "x": x,
+                    "y": y,
+                    "d_along": d_accum,
+                    "tmi": float(tmi_raw) if is_measured else None,
+                    "is_measured": is_measured,
+                })
+
+        return rows
+

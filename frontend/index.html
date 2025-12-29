@@ -26,7 +26,7 @@
   <!-- Main -->
   <div class="main">
 
-    <!-- LEFT: Controls -->
+    <!-- LEFT PANEL -->
     <div class="panel">
 
       <div class="section">
@@ -37,7 +37,7 @@
       <div class="section">
         <h3>Scenario</h3>
         <select id="scenario">
-          <option value="sparse_only">Sparse only</option>
+          <option value="sparse_only">Sparse geometry</option>
           <option value="explicit_geometry">Explicit geometry</option>
         </select>
       </div>
@@ -56,27 +56,21 @@
       </div>
 
       <div class="section">
-        <h3>Output spacing (meters)</h3>
+        <h3>Output station spacing (m)</h3>
         <input type="number" id="spacing" value="10" />
       </div>
 
-      <button type="button" id="createJobBtn">Create Job</button>
-      <button id="plotBtn" disabled>Plot Stations vs Values</button>
+      <button id="createJobBtn">Create Job</button>
+      <button id="downloadBtn" disabled>Download Final CSV</button>
+      <button id="plotBtn" disabled>Plot Graph</button>
 
       <div id="jobStatus"></div>
-      <a id="downloadBtn"></a>
+
     </div>
 
-    <!-- RIGHT: Visualization -->
+    <!-- RIGHT PANEL -->
     <div id="visualization">
-      <svg id="geometry-svg" viewBox="0 0 1000 600"></svg>
-
-      <canvas
-        id="valueChart"
-        width="1000"
-        height="400"
-        style="display:none; margin-top:20px; border:1px solid #222;"
-      ></canvas>
+      <canvas id="plotCanvas" width="1000" height="500"></canvas>
     </div>
 
   </div>

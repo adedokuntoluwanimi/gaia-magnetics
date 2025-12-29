@@ -1,6 +1,10 @@
 import csv
 from typing import List, Dict, Tuple
-from app.core.geometry import compute_d_along, generate_station_positions
+
+from app.core.geometry import (
+    compute_d_along,
+    generate_sparse_geometry,
+)
 
 
 def read_csv(
@@ -9,33 +13,72 @@ def read_csv(
     y_col: str,
     tmi_col: str,
 ) -> List[Dict]:
+    """
+    Read user CSV for a single traverse.
+
+    Output rows contain:
+    - x
+    - y
+    - tmi (None if missing)
+    """
+
     rows = []
 
-    with open(file_path, newline="", encoding="utf-8") as f:
+    with open(file_path, "r", encoding="utf-8") as f:
         reader = csv.DictReader(f)
+
         for r in reader:
+            x = float(r[x_col])
+            y = float(r[y_col])
+
+            tmi_raw = r.get(tmi_col)
+            if tmi_raw is None or tmi_raw == "":
+                tmi = None
+            else:
+                tmi = float(tmi_raw)
+
             rows.append({
-                "x": float(r[x_col]),
-                "y": float(r[y_col]),
-                "tmi": (
-                    float(r[tmi_col])
-                    if r[tmi_col] not in ("", None)
-                    else None
-                ),
+                "x": x,
+                "y": y,
+                "tmi": tmi,
             })
+
+    if not rows:
+        raise ValueError("Uploaded CSV contains no rows")
 
     return rows
 
 
-def split_explicit_geometry(rows: List[Dict]) -> Tuple[List[Dict], List[Dict]]:
+def split_explicit_geometry(
+    rows: List[Dict],
+) -> Tuple[List[Dict], List[Dict]]:
+    """
+    Explicit geometry:
+    - Geometry is fully provided
+    - Some rows have tmi, others don't
+    """
+
+    rows = compute_d_along(rows)
+
     train = []
     predict = []
 
     for r in rows:
-        if r["tmi"] is None:
-            predict.append(r)
+        if r["tmi"] is not None:
+            train.append({
+                "x": r["x"],
+                "y": r["y"],
+                "d_along": r["d_along"],
+                "tmi": r["tmi"],
+                "is_measured": 1,
+            })
         else:
-            train.append(r)
+            predict.append({
+                "x": r["x"],
+                "y": r["y"],
+                "d_along": r["d_along"],
+                "is_measured": 0,
+            })
 
     return train, predict
 
@@ -43,38 +86,36 @@ def split_explicit_geometry(rows: List[Dict]) -> Tuple[List[Dict], List[Dict]]:
 def split_sparse_geometry(
     rows: List[Dict],
     spacing: float,
-    tolerance: float = 1e-6,
 ) -> Tuple[List[Dict], List[Dict]]:
-    points = [(r["x"], r["y"]) for r in rows]
-    d_along = compute_d_along(points)
+    """
+    Sparse geometry:
+    - Uploaded rows are measured stations only
+    - Backend generates full geometry
+    """
 
-    for r, d in zip(rows, d_along):
-        r["d_along"] = d
-
-    start_d = d_along[0]
-    end_d = d_along[-1]
-
-    generated_positions = generate_station_positions(
-        start_d=start_d,
-        end_d=end_d,
-        spacing=spacing,
+    full_rows = generate_sparse_geometry(
+        rows=rows,
+        station_spacing=spacing,
     )
 
     train = []
     predict = []
 
-    for gp in generated_positions:
-        matched = False
-
-        for r in rows:
-            if abs(r["d_along"] - gp) <= tolerance:
-                train.append(r)
-                matched = True
-                break
-
-        if not matched:
+    for r in full_rows:
+        if r["is_measured"] == 1:
+            train.append({
+                "x": r["x"],
+                "y": r["y"],
+                "d_along": r["d_along"],
+                "tmi": r["tmi"],
+                "is_measured": 1,
+            })
+        else:
             predict.append({
-                "d_along": gp,
+                "x": r["x"],
+                "y": r["y"],
+                "d_along": r["d_along"],
+                "is_measured": 0,
             })
 
     return train, predict

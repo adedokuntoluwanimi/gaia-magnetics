@@ -5,18 +5,13 @@ body {
   color: #ffffff;
 }
 
-/* ---------- Header ---------- */
+/* Header */
 .header {
   display: flex;
   align-items: center;
   padding: 18px 28px;
   border-bottom: 1px solid #222;
   position: relative;
-}
-
-.brand-left {
-  display: flex;
-  align-items: center;
 }
 
 .geodev {
@@ -35,14 +30,14 @@ body {
   letter-spacing: 4px;
 }
 
-/* ---------- Main layout ---------- */
+/* Layout */
 .main {
   display: grid;
   grid-template-columns: 380px 1fr;
   height: calc(100vh - 72px);
 }
 
-/* ---------- Left panel ---------- */
+/* Panel */
 .panel {
   padding: 20px;
   border-right: 1px solid #222;
@@ -54,7 +49,6 @@ body {
 }
 
 .section h3 {
-  margin: 0 0 10px;
   font-size: 13px;
   text-transform: uppercase;
   letter-spacing: 1px;
@@ -62,9 +56,7 @@ body {
 }
 
 label {
-  display: block;
   font-size: 13px;
-  margin-bottom: 6px;
 }
 
 input, select {
@@ -82,13 +74,13 @@ button {
   background: #1f6feb;
   color: #fff;
   border: none;
-  cursor: pointer;
   font-weight: 600;
   margin-top: 10px;
+  cursor: pointer;
 }
 
 button:disabled {
-  opacity: 0.6;
+  opacity: 0.5;
   cursor: not-allowed;
 }
 
@@ -96,27 +88,15 @@ button:disabled {
   margin-top: 14px;
   font-size: 13px;
   color: #9aa4b2;
-  text-align: center;
+  white-space: pre-wrap;
 }
 
-#downloadBtn {
-  display: none;
-  margin-top: 10px;
-  text-align: center;
-  color: #1f6feb;
-  font-size: 13px;
-  text-decoration: none;
-  font-weight: 600;
-}
-
-/* ---------- Visualization ---------- */
+/* Plot */
 #visualization {
-  padding: 16px;
+  padding: 20px;
 }
 
-svg {
-  width: 100%;
-  height: 100%;
+#plotCanvas {
   background: #0e0e0e;
-  border-left: 1px solid #222;
+  border: 1px solid #222;
 }

@@ -1,4 +1,5 @@
 import csv
+from importlib.resources import path
 import json
 import tempfile
 from datetime import datetime
@@ -179,27 +180,25 @@ class JobRunner:
         if not rows:
             return
         with open(path, "w", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(
-                f,
-                fieldnames=["x", "y", "d_along", "tmi"],
-            )
+            fieldnames = ["x", "y", "d_along", "tmi"]
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()
             for r in rows:
-                writer.writerow(r)
+                clean = {k: r[k] for k in fieldnames}
+                writer.writerow(clean)
 
-    def _write_predict(self, rows: List[Dict], path: str) -> None:
+def _write_predict(self, rows: List[Dict], path: str) -> None:
         if not rows:
             return
         with open(path, "w", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(
-                f,
-                fieldnames=["x", "y", "d_along"],
-            )
+            fieldnames = ["x", "y", "d_along"]
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()
             for r in rows:
-                writer.writerow(r)
+                clean = {k: r[k] for k in fieldnames}
+                writer.writerow(clean)
 
-    def _read_original_with_flags(self, path: str) -> List[Dict]:
+def _read_original_with_flags(self, path: str) -> List[Dict]:
         """
         Re-read original CSV and compute d_along + is_measured.
         One file = one traverse.

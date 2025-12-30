@@ -1,13 +1,20 @@
 import boto3
+from sagemaker import image_uris
 
 REGION = "us-east-1"
 ROLE_ARN = "arn:aws:iam::425933242610:role/gaia-ec2-s3-role"
 MODEL_NAME = "gaia-train-on-the-fly-model"
 
-IMAGE_URI = (
-    "246618743249.dkr.ecr.us-east-1.amazonaws.com/"
-    "sagemaker-scikit-learn:1.2-1-cpu-py3"
+
+
+IMAGE_URI = image_uris.retrieve(
+    framework="sklearn",
+    region=REGION,
+    version="1.2-1",
+    py_version="py3",
+    instance_type="ml.m5.large",
 )
+
 
 SOURCE_DIR_S3 = "s3://gaia22/ml/inference.tar.gz"
 

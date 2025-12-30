@@ -1,49 +1,91 @@
+# app/core/s3_io.py
+
+import csv
+import io
+from typing import List
 import boto3
-from pathlib import Path
+
+from app.core.geometry import GeometryRow
 
 
 class S3IO:
-    def __init__(self, bucket: str, region: str = "us-east-1"):
+    def __init__(self, bucket: str, region: str | None = None):
         self.bucket = bucket
         self.s3 = boto3.client("s3", region_name=region)
 
-    # -----------------------------
-    # Upload
-    # -----------------------------
-    def upload_file(self, local_path: Path, s3_key: str):
-        if not local_path.exists():
-            raise FileNotFoundError(local_path)
+    # -------------------------------------------------
+    # Upload helpers
+    # -------------------------------------------------
 
-        self.s3.upload_file(
-            str(local_path),
-            self.bucket,
-            s3_key,
-        )
+    def upload_train_csv(
+        self,
+        key: str,
+        rows: List[GeometryRow],
+    ) -> None:
+        """
+        Upload measured rows as train.csv (no header).
+        """
+        buf = io.StringIO()
+        writer = csv.writer(buf)
 
-    # -----------------------------
-    # Download
-    # -----------------------------
-    def download_file(self, s3_key: str, local_path: Path):
-        local_path.parent.mkdir(parents=True, exist_ok=True)
+        for r in rows:
+            writer.writerow([r.x, r.y, r.d_along, r.tmi])
 
-        self.s3.download_file(
-            self.bucket,
-            s3_key,
-            str(local_path),
-        )
+        self._upload_text(key, buf.getvalue())
 
-    # -----------------------------
-    # List objects
-    # -----------------------------
-    def list_prefix(self, prefix: str):
-        paginator = self.s3.get_paginator("list_objects_v2")
+    def upload_predict_csv(
+        self,
+        key: str,
+        rows: List[GeometryRow],
+    ) -> None:
+        """
+        Upload predict rows as predict.csv (no header).
+        """
+        buf = io.StringIO()
+        writer = csv.writer(buf)
 
-        keys = []
-        for page in paginator.paginate(
+        for r in rows:
+            writer.writerow([r.x, r.y, r.d_along])
+
+        self._upload_text(key, buf.getvalue())
+
+    # -------------------------------------------------
+    # Download helpers
+    # -------------------------------------------------
+
+    def download_predictions(
+        self,
+        key: str,
+    ) -> List[float]:
+        """
+        Download prediction CSV and return values in order.
+        """
+        obj = self.s3.get_object(Bucket=self.bucket, Key=key)
+        body = obj["Body"].read().decode("utf-8")
+
+        reader = csv.reader(io.StringIO(body))
+        predictions: List[float] = []
+
+        for i, row in enumerate(reader, start=1):
+            if not row:
+                continue
+            try:
+                predictions.append(float(row[0]))
+            except ValueError:
+                raise ValueError(f"Invalid prediction value at row {i}")
+
+        if not predictions:
+            raise ValueError("Prediction file is empty")
+
+        return predictions
+
+    # -------------------------------------------------
+    # Internal
+    # -------------------------------------------------
+
+    def _upload_text(self, key: str, text: str) -> None:
+        self.s3.put_object(
             Bucket=self.bucket,
-            Prefix=prefix,
-        ):
-            for obj in page.get("Contents", []):
-                keys.append(obj["Key"])
-
-        return keys
+            Key=key,
+            Body=text.encode("utf-8"),
+        )

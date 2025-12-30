@@ -1,54 +1,88 @@
+# app/api/jobs.py
+
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException
+from fastapi.responses import StreamingResponse
 from typing import Optional
+import io
+from app.schemas.job import Scenario
+import boto3
 
 from app.core.job_runner import JobRunner
 
-router = APIRouter()
 
+router = APIRouter(prefix="/jobs", tags=["jobs"])
+
+
+# -------------------------------------------------
+# Config (explicit, no magic)
+# -------------------------------------------------
+
+S3_BUCKET = "YOUR_BUCKET_NAME"
+AWS_REGION = "YOUR_REGION"
+SAGEMAKER_ENDPOINT = "YOUR_ENDPOINT_NAME"
+
+
+def get_job_runner() -> JobRunner:
+    return JobRunner(
+        s3_bucket=S3_BUCKET,
+        s3_region=AWS_REGION,
+        sagemaker_endpoint=SAGEMAKER_ENDPOINT,
+    )
+
+
+# -------------------------------------------------
+# POST /jobs
+# -------------------------------------------------
 
 @router.post("")
 def create_job(
     file: UploadFile = File(...),
-    scenario: str = Form(...),
+    scenario: Scenario = Form(...),
     x_column: str = Form(...),
     y_column: str = Form(...),
     tmi_column: str = Form(...),
     station_spacing: Optional[float] = Form(None),
 ):
-    if scenario not in ("sparse", "explicit"):
-        raise HTTPException(status_code=400, detail="Invalid scenario")
-
-    if scenario == "sparse" and station_spacing is None:
-        raise HTTPException(
-            status_code=400,
-            detail="station_spacing is required for sparse geometry",
-        )
-
-    runner = JobRunner()
-
     try:
-        result = runner.run(
-            upload_file=file,
+        runner = get_job_runner()
+
+        job_id = runner.run(
+            csv_file=io.TextIOWrapper(file.file, encoding="utf-8"),
             scenario=scenario,
             x_column=x_column,
             y_column=y_column,
             tmi_column=tmi_column,
             station_spacing=station_spacing,
         )
+
+        return {"job_id": job_id}
+
     except Exception as e:
-        # Keep this blunt for now. We want to SEE failures.
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e))
 
-    return result
 
+# -------------------------------------------------
+# GET /jobs/{job_id}/download
+# -------------------------------------------------
 
 @router.get("/{job_id}/download")
 def download_result(job_id: str):
-    runner = JobRunner()
+    s3 = boto3.client("s3", region_name=AWS_REGION)
+
+    key = f"{job_id}/final.csv"
 
     try:
-        return runner.get_final_csv(job_id)
-    except FileNotFoundError:
-        raise HTTPException(status_code=404, detail="Job not found")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        obj = s3.get_object(Bucket=S3_BUCKET, Key=key)
+    except s3.exceptions.NoSuchKey:
+        raise HTTPException(status_code=404, detail="Result not found")
+
+    def stream():
+        yield from obj["Body"].iter_lines()
+
+    return StreamingResponse(
+        stream(),
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": f"attachment; filename={job_id}.csv"
+        },
+    )

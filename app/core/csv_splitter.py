@@ -1,68 +1,61 @@
 import csv
-from typing import List, Dict, Tuple
+from typing import List, Dict, Optional
 
 
-def read_and_split_csv(
-    csv_path: str,
+Row = Dict[str, Optional[float]]
+
+
+def read_csv(
+    path: str,
     x_col: str,
     y_col: str,
-    value_col: str,
-) -> Tuple[List[Dict], List[Dict]]:
+    value_col: Optional[str],
+) -> List[Row]:
     """
-    Returns:
-        measured_rows: rows with value present
-        predict_rows: rows with missing value
+    Read CSV and normalize rows.
 
-    Each row contains:
-        x, y, value (None if missing)
+    Returns rows with keys:
+    - x: float
+    - y: float
+    - value: float | None
+
+    Rules:
+    - Empty strings → None
+    - Rows missing x or y → dropped
     """
 
-    measured_rows: List[Dict] = []
-    predict_rows: List[Dict] = []
+    rows: List[Row] = []
 
-    with open(csv_path, newline="", encoding="utf-8") as f:
+    with open(path, newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
-
-        required = {x_col, y_col, value_col}
-        if not required.issubset(reader.fieldnames or []):
-            raise ValueError(
-                f"CSV missing required columns: {required}"
-            )
 
         for i, r in enumerate(reader, start=2):
             try:
-                x = float(r[x_col])
-                y = float(r[y_col])
-            except (TypeError, ValueError):
-                raise ValueError(
-                    f"Invalid x/y at line {i}"
+                x_raw = r.get(x_col, "").strip()
+                y_raw = r.get(y_col, "").strip()
+
+                if not x_raw or not y_raw:
+                    continue
+
+                x = float(x_raw)
+                y = float(y_raw)
+
+                value: Optional[float] = None
+                if value_col:
+                    v_raw = r.get(value_col, "").strip()
+                    if v_raw != "":
+                        value = float(v_raw)
+
+                rows.append(
+                    {
+                        "x": x,
+                        "y": y,
+                        "value": value,
+                    }
                 )
 
-            raw_value = r[value_col]
+            except ValueError:
+                # Drop malformed rows silently
+                continue
 
-            if raw_value is None or raw_value.strip() == "":
-                predict_rows.append({
-                    "x": x,
-                    "y": y,
-                    "value": None,
-                })
-            else:
-                try:
-                    value = float(raw_value)
-                except ValueError:
-                    raise ValueError(
-                        f"Invalid value at line {i}"
-                    )
-
-                measured_rows.append({
-                    "x": x,
-                    "y": y,
-                    "value": value,
-                })
-
-    if not measured_rows:
-        raise RuntimeError(
-            "No measured rows found in CSV"
-        )
-
-    return measured_rows, predict_rows
+    return rows

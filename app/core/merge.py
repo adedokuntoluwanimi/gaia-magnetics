@@ -1,42 +1,44 @@
-from typing import List, Dict
+# app/core/merge.py
+
+from typing import List
+from app.core.geometry import GeometryRow
 
 
-def merge_measured_and_predicted(
-    measured_rows: List[Dict],
-    predicted_rows: List[Dict],
+def merge_predictions(
+    geometry: List[GeometryRow],
     predictions: List[float],
-) -> List[Dict]:
+) -> List[GeometryRow]:
     """
-    measured_rows:
-        rows that already have values
+    Merge predictions into geometry rows.
 
-    predicted_rows:
-        rows that need values (same order used for inference)
-
-    predictions:
-        model output, same length as predicted_rows
+    Assumptions (LOCKED):
+    - predictions correspond ONLY to rows where is_measured == 0
+    - order is preserved
+    - len(predictions) == number of unmeasured rows
     """
 
-    if len(predicted_rows) != len(predictions):
-        raise RuntimeError(
-            "Prediction count mismatch during merge"
-        )
+    output: List[GeometryRow] = []
+    pred_idx = 0
 
-    merged: List[Dict] = []
+    for row in geometry:
+        if row.is_measured == 1:
+            output.append(row)
+        else:
+            if pred_idx >= len(predictions):
+                raise ValueError("Prediction count mismatch")
 
-    # 1. Keep measured rows exactly as they are
-    for row in measured_rows:
-        merged.append({
-            **row,
-            "source": "measured",
-        })
+            output.append(
+                GeometryRow(
+                    x=row.x,
+                    y=row.y,
+                    d_along=row.d_along,
+                    tmi=predictions[pred_idx],
+                    is_measured=0,
+                )
+            )
+            pred_idx += 1
 
-    # 2. Attach predictions to predicted rows
-    for row, value in zip(predicted_rows, predictions):
-        merged.append({
-            **row,
-            "value": value,
-            "source": "predicted",
-        })
+    if pred_idx != len(predictions):
+        raise ValueError("Unused predictions remain")
 
-    return merged
+    return output

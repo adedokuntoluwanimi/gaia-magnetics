@@ -1,44 +1,42 @@
-# app/core/merge.py
-
-from typing import List
-from app.core.geometry import GeometryRow
+from typing import List, Dict
 
 
-def merge_predictions(
-    geometry: List[GeometryRow],
-    predictions: List[float],
-) -> List[GeometryRow]:
+def merge_measured_and_predicted(
+    train_rows: List[Dict],
+    predicted_rows: List[Dict],
+) -> List[Dict]:
     """
-    Merge predictions into geometry rows.
+    Merges measured (train) rows with predicted rows.
 
-    Assumptions (LOCKED):
-    - predictions correspond ONLY to rows where is_measured == 0
-    - order is preserved
-    - len(predictions) == number of unmeasured rows
+    Rules:
+    - Measured rows are preserved exactly
+    - Predicted rows are added as-is
+    - No snapping or replacement
+    - A 'source' column differentiates rows
+    - Final output is sorted by distance_along
     """
 
-    output: List[GeometryRow] = []
-    pred_idx = 0
+    merged = []
 
-    for row in geometry:
-        if row.is_measured == 1:
-            output.append(row)
-        else:
-            if pred_idx >= len(predictions):
-                raise ValueError("Prediction count mismatch")
+    # ----------------------------
+    # Add measured rows
+    # ----------------------------
+    for row in train_rows:
+        r = dict(row)
+        r["source"] = "measured"
+        merged.append(r)
 
-            output.append(
-                GeometryRow(
-                    x=row.x,
-                    y=row.y,
-                    d_along=row.d_along,
-                    tmi=predictions[pred_idx],
-                    is_measured=0,
-                )
-            )
-            pred_idx += 1
+    # ----------------------------
+    # Add predicted rows
+    # ----------------------------
+    for row in predicted_rows:
+        r = dict(row)
+        r["source"] = "predicted"
+        merged.append(r)
 
-    if pred_idx != len(predictions):
-        raise ValueError("Unused predictions remain")
+    # ----------------------------
+    # Sort by distance along traverse
+    # ----------------------------
+    merged.sort(key=lambda r: float(r["distance_along"]))
 
-    return output
+    return merged

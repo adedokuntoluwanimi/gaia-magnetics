@@ -1,76 +1,110 @@
-# app/core/inference.py
-
 import json
-from typing import List
+import csv
+from pathlib import Path
+from typing import List, Dict
+
 import boto3
 
 
-class SageMakerInference:
+# ============================================================
+# Configuration
+# ============================================================
+
+SAGEMAKER_ENDPOINT_NAME = "gaia-magnetics-endpoint"
+AWS_REGION = "us-east-1"
+
+
+# ============================================================
+# SageMaker client
+# ============================================================
+
+_runtime = boto3.client(
+    "sagemaker-runtime",
+    region_name=AWS_REGION,
+)
+
+
+# ============================================================
+# Inference runner
+# ============================================================
+
+def run_sagemaker_inference(
+    train_csv: Path,
+    predict_csv: Path,
+) -> List[Dict]:
     """
-    SageMaker inference wrapper.
+    Calls a SageMaker endpoint to infer magnetic values.
 
-    Contract (LOCKED):
-    - Endpoint receives S3 URIs for train.csv and predict.csv
-    - Endpoint is responsible for:
-        * loading train.csv
-        * fitting model
-        * predicting predict.csv
-    - Endpoint returns one prediction per predict row
-    - Order is preserved
+    Expected behavior:
+    - Model learns magnetic_value vs distance_along from train
+    - Model predicts magnetic_value for predict distances
+    - Returned rows must include distance_along and magnetic_value
+
+    Returns:
+    - List of predicted rows
     """
 
-    def __init__(self, endpoint_name: str, region: str | None = None):
-        self.endpoint_name = endpoint_name
-        self.runtime = boto3.client(
-            "sagemaker-runtime",
-            region_name=region,
-        )
+    # ----------------------------
+    # Load train data
+    # ----------------------------
+    train_rows = _read_csv(train_csv)
+    predict_rows = _read_csv(predict_csv)
 
-    def predict(
-        self,
-        *,
-        train_s3_uri: str,
-        predict_s3_uri: str,
-    ) -> List[float]:
-        """
-        Invoke SageMaker endpoint using train-on-the-fly inference.
-        """
+    if not predict_rows:
+        return []
 
-        payload = {
-            "train_uri": train_s3_uri,
-            "predict_uri": predict_s3_uri,
-        }
+    # ----------------------------
+    # Prepare payload
+    # ----------------------------
+    payload = {
+        "train": [
+            {
+                "distance_along": float(r["distance_along"]),
+                "value": float(r["magnetic_value"]),
+            }
+            for r in train_rows
+        ],
+        "predict": [
+            {
+                "distance_along": float(r["distance_along"]),
+            }
+            for r in predict_rows
+        ],
+    }
 
-        response = self.runtime.invoke_endpoint(
-            EndpointName=self.endpoint_name,
-            ContentType="application/json",
-            Body=json.dumps(payload),
-        )
+    # ----------------------------
+    # Invoke endpoint
+    # ----------------------------
+    response = _runtime.invoke_endpoint(
+        EndpointName=SAGEMAKER_ENDPOINT_NAME,
+        ContentType="application/json",
+        Body=json.dumps(payload),
+    )
 
-        body = response["Body"].read().decode("utf-8")
+    # ----------------------------
+    # Parse response
+    # ----------------------------
+    body = response["Body"].read().decode("utf-8")
+    result = json.loads(body)
 
-        # ---------------------------------------------
-        # Parse response
-        # ---------------------------------------------
+    if "predictions" not in result:
+        raise RuntimeError("Invalid response from SageMaker endpoint")
 
-        # Preferred: JSON array
-        try:
-            data = json.loads(body)
-            if isinstance(data, list):
-                return [float(v) for v in data]
-        except json.JSONDecodeError:
-            pass
+    predictions = []
+    for item in result["predictions"]:
+        predictions.append({
+            "distance_along": float(item["distance_along"]),
+            "magnetic_value": float(item["magnetic_value"]),
+        })
 
-        # Fallback: newline / CSV style
-        predictions: List[float] = []
+    return predictions
 
-        for line in body.splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            predictions.append(float(line))
 
-        if not predictions:
-            raise ValueError("No predictions returned from SageMaker endpoint")
+# ============================================================
+# Internal helpers
+# ============================================================
 
-        return predictions
+def _read_csv(path: Path) -> List[Dict]:
+    with open(path, newline="") as f:
+        reader = csv.DictReader(f)
+        return list(reader)

@@ -1,80 +1,94 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <title>GAIA-MAGNETICS</title>
+    <meta charset="UTF-8" />
+    <title>GAIA Magnetics</title>
 
-  <!-- Favicon -->
-  <link rel="icon" type="image/png" href="images/favicon.png" />
+    <link rel="icon" type="image/png" href="images/favicon.png" />
+    <link rel="stylesheet" href="styles.css" />
 
-  <!-- Font -->
-  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@700;900&display=swap" rel="stylesheet">
-
-  <link rel="stylesheet" href="style.css" />
+    <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
 </head>
 
 <body>
+<div id="app">
 
-  <!-- Header -->
-  <div class="header">
-    <div class="brand-left">
-      <div class="geodev">GEODEV</div>
-    </div>
-    <div class="gaia">GAIA-MAGNETICS</div>
-  </div>
+    <!-- ========================================= -->
+    <!-- Left Control Panel -->
+    <!-- ========================================= -->
+    <aside id="control-panel">
 
-  <!-- Main -->
-  <div class="main">
+        <div class="panel-header">
+            <div class="brand">GEODEV</div>
+        </div>
 
-    <!-- LEFT PANEL -->
-    <div class="panel">
+        <div class="panel-section">
+            <label>Upload CSV</label>
+            <input type="file" id="csv-file" accept=".csv" />
+        </div>
 
-      <div class="section">
-        <h3>Upload CSV</h3>
-        <input type="file" id="csvFile" accept=".csv" />
-      </div>
+        <div class="panel-section">
+            <label>Scenario</label>
+            <select id="scenario">
+                <option value="explicit">Explicit geometry</option>
+                <option value="sparse">Sparse geometry</option>
+            </select>
+        </div>
 
-      <div class="section">
-        <h3>Scenario</h3>
-        <select id="scenario">
-          <option value="sparse_only">Sparse geometry</option>
-          <option value="explicit_geometry">Explicit geometry</option>
-        </select>
-      </div>
+        <div class="panel-section">
+            <label>X coordinate column</label>
+            <select id="x-column"></select>
+        </div>
 
-      <div class="section">
-        <h3>Column Mapping</h3>
+        <div class="panel-section">
+            <label>Y coordinate column</label>
+            <select id="y-column"></select>
+        </div>
 
-        <label>X column</label>
-        <select id="xColumn"></select>
+        <div class="panel-section">
+            <label>Magnetic value column</label>
+            <select id="value-column"></select>
+        </div>
 
-        <label>Y column</label>
-        <select id="yColumn"></select>
+        <div class="panel-section" id="spacing-section">
+            <label>Output station spacing (m)</label>
+            <input type="number" id="station-spacing" step="0.1" />
+        </div>
 
-        <label>Value column</label>
-        <select id="valueColumn"></select>
-      </div>
+        <div class="panel-section">
+            <button id="create-job-btn">Create Job</button>
+        </div>
 
-      <div class="section">
-        <h3>Output station spacing (m)</h3>
-        <input type="number" id="spacing" value="10" />
-      </div>
+        <div class="panel-section status-section">
+            <span id="job-status">Idle</span>
+        </div>
 
-      <button id="createJobBtn">Create Job</button>
-      <button id="downloadBtn" disabled>Download Final CSV</button>
-      <button id="plotBtn" disabled>Plot Graph</button>
+        <div class="panel-footer hidden" id="result-actions">
+            <button id="download-btn">Download CSV</button>
+            <button id="plot-btn">Plot graph</button>
+        </div>
 
-      <div id="jobStatus"></div>
+    </aside>
 
-    </div>
+    <!-- ========================================= -->
+    <!-- Main Canvas -->
+    <!-- ========================================= -->
+    <main id="main-canvas">
 
-    <!-- RIGHT PANEL -->
-    <div id="visualization">
-      <canvas id="plotCanvas" width="1000" height="500"></canvas>
-    </div>
+        <div id="canvas-header">
+            GEOSPATIAL AUTOMATION AND INTELLIGENT EARTH ANALYSIS – MAGNETICS
+        </div>
 
-  </div>
+        <div id="canvas-placeholder">
+            <p>No results loaded</p>
+        </div>
 
-  <script src="app.js"></script>
+        <div id="plot-container" class="hidden"></div>
+
+    </main>
+
+</div>
+
+<script src="app.js"></script>
 </body>
 </html>

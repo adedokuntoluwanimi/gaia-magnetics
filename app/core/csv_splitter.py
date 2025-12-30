@@ -1,61 +1,43 @@
-import csv
-from typing import List, Dict, Optional
+from typing import List, Dict, Tuple
 
 
-Row = Dict[str, Optional[float]]
-
-
-def read_csv(
-    path: str,
-    x_col: str,
-    y_col: str,
-    value_col: Optional[str],
-) -> List[Row]:
+def split_train_predict(
+    rows: List[Dict],
+    value_col: str,
+) -> Tuple[List[Dict], List[Dict]]:
     """
-    Read CSV and normalize rows.
-
-    Returns rows with keys:
-    - x: float
-    - y: float
-    - value: float | None
+    Splits rows into train and predict datasets.
 
     Rules:
-    - Empty strings → None
-    - Rows missing x or y → dropped
+    - Train rows: rows that have a magnetic value
+    - Predict rows: rows without a magnetic value
+    - Geometry and distance_along must already exist
+    - No geometry generation here
+    - No reordering here
+
+    Returns:
+    - (train_rows, predict_rows)
     """
 
-    rows: List[Row] = []
+    train_rows = []
+    predict_rows = []
 
-    with open(path, newline="", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
+    for row in rows:
+        value = row.get(value_col)
 
-        for i, r in enumerate(reader, start=2):
-            try:
-                x_raw = r.get(x_col, "").strip()
-                y_raw = r.get(y_col, "").strip()
+        # Normalize empty strings
+        if value == "":
+            value = None
 
-                if not x_raw or not y_raw:
-                    continue
+        if value is None:
+            predict_row = dict(row)
+            predict_row.pop(value_col, None)
+            predict_rows.append(predict_row)
+        else:
+            train_row = dict(row)
+            train_rows.append(train_row)
 
-                x = float(x_raw)
-                y = float(y_raw)
+    if not train_rows:
+        raise ValueError("No training data found. At least one measured value is required.")
 
-                value: Optional[float] = None
-                if value_col:
-                    v_raw = r.get(value_col, "").strip()
-                    if v_raw != "":
-                        value = float(v_raw)
-
-                rows.append(
-                    {
-                        "x": x,
-                        "y": y,
-                        "value": value,
-                    }
-                )
-
-            except ValueError:
-                # Drop malformed rows silently
-                continue
-
-    return rows
+    return train_rows, predict_rows

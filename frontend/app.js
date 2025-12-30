@@ -1,238 +1,164 @@
-/* =====================================
-   DOM HELPERS
-===================================== */
-function $(id) {
-  return document.getElementById(id);
-}
+const csvInput = document.getElementById("csv-file");
+const scenarioSelect = document.getElementById("scenario");
+const spacingInput = document.getElementById("station-spacing");
+const spacingSection = document.getElementById("spacing-section");
 
-/* =====================================
-   DOM ELEMENTS
-===================================== */
-const csvFileInput       = $("csvFile");
-const scenarioSelect     = $("scenario");
-const spacingInput       = $("spacing");
+const xSelect = document.getElementById("x-column");
+const ySelect = document.getElementById("y-column");
+const valueSelect = document.getElementById("value-column");
 
-const xColumnSelect      = $("xColumn");
-const yColumnSelect      = $("yColumn");
-const valueColumnSelect  = $("valueColumn");
+const createJobBtn = document.getElementById("create-job-btn");
+const jobStatusEl = document.getElementById("job-status");
 
-const createJobBtn       = $("createJobBtn");
-const downloadBtn        = $("downloadBtn");
-const plotBtn            = $("plotBtn");
-const jobStatus          = $("jobStatus");
+const resultActions = document.getElementById("result-actions");
+const downloadBtn = document.getElementById("download-btn");
+const plotBtn = document.getElementById("plot-btn");
 
-const canvas             = $("plotCanvas");
-const ctx                = canvas ? canvas.getContext("2d") : null;
+const placeholder = document.getElementById("canvas-placeholder");
+const plotContainer = document.getElementById("plot-container");
 
 let currentJobId = null;
+let pollInterval = null;
 
-/* =====================================
-   SCENARIO HANDLING
-===================================== */
-if (scenarioSelect && spacingInput) {
-  scenarioSelect.addEventListener("change", () => {
-    const isExplicit = normalizeScenario(scenarioSelect.value) === "explicit";
-    spacingInput.disabled = isExplicit;
-    if (isExplicit) spacingInput.value = "";
-  });
-}
+/* ================= CSV HEADER PARSING ================= */
 
-/* =====================================
-   CSV HEADER PARSING
-===================================== */
-if (csvFileInput) {
-  csvFileInput.addEventListener("change", () => {
-    const file = csvFileInput.files[0];
+csvInput.addEventListener("change", () => {
+    const file = csvInput.files[0];
     if (!file) return;
 
     const reader = new FileReader();
-    reader.onload = () => {
-      const headers = reader.result
-        .split("\n")[0]
-        .split(",")
-        .map(h => h.trim());
-
-      populateSelect(xColumnSelect, headers);
-      populateSelect(yColumnSelect, headers);
-      populateSelect(valueColumnSelect, headers);
+    reader.onload = e => {
+        const firstLine = e.target.result.split("\n")[0];
+        const headers = firstLine.split(",").map(h => h.trim());
+        populateDropdowns(headers);
     };
-
     reader.readAsText(file);
-  });
-}
+});
 
-function populateSelect(select, options) {
-  if (!select) return;
-  select.innerHTML = "";
-  options.forEach(opt => {
-    const o = document.createElement("option");
-    o.value = opt;
-    o.textContent = opt;
-    select.appendChild(o);
-  });
-}
-
-/* =====================================
-   SCENARIO NORMALIZATION
-===================================== */
-function normalizeScenario(v) {
-  if (v === "sparse_only" || v === "sparse_geometry") return "sparse";
-  return "explicit";
-}
-
-/* =====================================
-   CREATE JOB
-===================================== */
-if (createJobBtn) {
-  createJobBtn.addEventListener("click", async () => {
-    if (!csvFileInput || !csvFileInput.files.length) {
-      alert("Upload a CSV first");
-      return;
-    }
-
-    if (!scenarioSelect || !xColumnSelect || !yColumnSelect || !valueColumnSelect) {
-      console.error("Missing required form fields");
-      return;
-    }
-
-    const scenario = normalizeScenario(scenarioSelect.value);
-
-    jobStatus.textContent = "Running job...";
-
-    const form = new FormData();
-    form.append("file", csvFileInput.files[0]);
-    form.append("scenario", scenario);
-    form.append("x_col", xColumnSelect.value);
-    form.append("y_col", yColumnSelect.value);
-    form.append("tmi_col", valueColumnSelect.value);
-
-    if (scenario === "sparse") {
-      if (!spacingInput || !spacingInput.value) {
-        alert("Station spacing is required for sparse geometry");
-        jobStatus.textContent = "";
-        return;
-      }
-      form.append("station_spacing", spacingInput.value);
-    }
-
-    let res;
-    try {
-      res = await fetch("/jobs", {
-        method: "POST",
-        body: form
-      });
-    } catch (e) {
-      console.error("Network error:", e);
-      jobStatus.textContent = "";
-      return;
-    }
-
-    if (!res.ok) {
-      console.error("Backend error:", await res.text());
-      jobStatus.textContent = "";
-      return;
-    }
-
-    const data = await res.json();
-    currentJobId = data.job_id;
-
-    jobStatus.textContent = "";
-    downloadBtn.disabled = false;
-    plotBtn.disabled = false;
-  });
-}
-
-/* =====================================
-   DOWNLOAD
-===================================== */
-if (downloadBtn) {
-  downloadBtn.addEventListener("click", () => {
-    if (!currentJobId) return;
-    window.location.href = `/jobs/${currentJobId}/download`;
-  });
-}
-
-/* =====================================
-   PLOT
-===================================== */
-if (plotBtn && ctx) {
-  plotBtn.addEventListener("click", async () => {
-    if (!currentJobId) return;
-
-    const res = await fetch(`/jobs/${currentJobId}/download`);
-    const text = await res.text();
-
-    const rows = text.trim().split("\n");
-    const header = rows.shift().split(",");
-
-    const idx = {
-      d: header.indexOf("d_along"),
-      t: header.indexOf("tmi"),
-      m: header.indexOf("is_measured"),
-    };
-
-    const measured = [];
-    const predicted = [];
-
-    rows.forEach(r => {
-      const c = r.split(",");
-      const p = { x: +c[idx.d], y: +c[idx.t] };
-      c[idx.m] === "1" ? measured.push(p) : predicted.push(p);
+function populateDropdowns(headers) {
+    [xSelect, ySelect, valueSelect].forEach(select => {
+        select.innerHTML = "";
+        headers.forEach(h => {
+            const opt = document.createElement("option");
+            opt.value = h;
+            opt.textContent = h;
+            select.appendChild(opt);
+        });
     });
-
-    drawPlot(measured, predicted);
-  });
 }
 
-function drawPlot(measured, predicted) {
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
+/* ================= SCENARIO LOGIC ================= */
 
-  const all = measured.concat(predicted);
-  if (!all.length) return;
+scenarioSelect.addEventListener("change", () => {
+    if (scenarioSelect.value === "sparse") {
+        spacingInput.disabled = true;
+        spacingInput.value = "";
+        spacingSection.style.opacity = "0.4";
+    } else {
+        spacingInput.disabled = false;
+        spacingSection.style.opacity = "1";
+    }
+});
 
-  const pad = 60;
-  const xs = all.map(p => p.x);
-  const ys = all.map(p => p.y);
+/* ================= CREATE JOB ================= */
 
-  const xmin = Math.min(...xs);
-  const xmax = Math.max(...xs);
-  const ymin = Math.min(...ys);
-  const ymax = Math.max(...ys);
+createJobBtn.addEventListener("click", async () => {
+    if (!csvInput.files.length) {
+        alert("Upload a CSV file");
+        return;
+    }
 
-  const sx = (canvas.width - 2 * pad) / (xmax - xmin || 1);
-  const sy = (canvas.height - 2 * pad) / (ymax - ymin || 1);
+    const formData = new FormData();
+    formData.append("csv_file", csvInput.files[0]);
+    formData.append("scenario", scenarioSelect.value);
+    formData.append("x_column", xSelect.value);
+    formData.append("y_column", ySelect.value);
+    formData.append("value_column", valueSelect.value);
 
-  const map = p => ({
-    x: pad + (p.x - xmin) * sx,
-    y: canvas.height - (pad + (p.y - ymin) * sy),
-  });
+    if (!spacingInput.disabled && spacingInput.value) {
+        formData.append("station_spacing", spacingInput.value);
+    }
 
-  ctx.strokeStyle = "#aaa";
-  ctx.beginPath();
-  ctx.moveTo(pad, pad);
-  ctx.lineTo(pad, canvas.height - pad);
-  ctx.lineTo(canvas.width - pad, canvas.height - pad);
-  ctx.stroke();
+    jobStatusEl.textContent = "Running...";
+    resultActions.classList.add("hidden");
+    clearPlot();
 
-  ctx.fillText("Distance along traverse (m)", canvas.width / 2 - 90, canvas.height - 20);
-  ctx.save();
-  ctx.rotate(-Math.PI / 2);
-  ctx.fillText("Magnetic value (TMI)", -canvas.height / 2 - 50, 20);
-  ctx.restore();
+    const res = await fetch("/jobs", { method: "POST", body: formData });
+    const data = await res.json();
 
-  ctx.fillStyle = "blue";
-  measured.forEach(p => {
-    const m = map(p);
-    ctx.beginPath();
-    ctx.arc(m.x, m.y, 4, 0, Math.PI * 2);
-    ctx.fill();
-  });
+    currentJobId = data.job_id;
+    startPolling();
+});
 
-  ctx.strokeStyle = "blue";
-  predicted.forEach(p => {
-    const m = map(p);
-    ctx.beginPath();
-    ctx.arc(m.x, m.y, 4, 0, Math.PI * 2);
-    ctx.stroke();
-  });
+/* ================= POLLING ================= */
+
+function startPolling() {
+    stopPolling();
+    pollInterval = setInterval(async () => {
+        const res = await fetch(`/jobs/${currentJobId}/status`);
+        const data = await res.json();
+        jobStatusEl.textContent = data.status.toUpperCase();
+
+        if (data.status === "completed") {
+            stopPolling();
+            resultActions.classList.remove("hidden");
+        }
+    }, 2000);
+}
+
+function stopPolling() {
+    if (pollInterval) clearInterval(pollInterval);
+}
+
+/* ================= DOWNLOAD ================= */
+
+downloadBtn.onclick = () => {
+    window.location.href = `/jobs/${currentJobId}/result.csv`;
+};
+
+/* ================= PLOT ================= */
+
+plotBtn.onclick = async () => {
+    const res = await fetch(`/jobs/${currentJobId}/result.json`);
+    const rows = await res.json();
+
+    const measured = rows.filter(r => r.source === "measured");
+    const predicted = rows.filter(r => r.source === "predicted");
+
+    placeholder.classList.add("hidden");
+    plotContainer.classList.remove("hidden");
+
+    Plotly.newPlot(plotContainer, [
+        {
+            x: measured.map(r => r.distance_along),
+            y: measured.map(r => r.magnetic_value),
+            mode: "markers",
+            name: "Measured",
+            marker: { color: "#3b82f6", size: 8 }
+        },
+        {
+            x: predicted.map(r => r.distance_along),
+            y: predicted.map(r => r.magnetic_value),
+            mode: "markers",
+            name: "Predicted",
+            marker: {
+                color: "#3b82f6",
+                size: 8,
+                symbol: "circle-open",
+                line: { width: 2 }
+            }
+        }
+    ], {
+        paper_bgcolor: "#0e1117",
+        plot_bgcolor: "#0e1117",
+        font: { color: "#e5e7eb" },
+        xaxis: { title: "Distance along traverse", gridcolor: "#1f2937" },
+        yaxis: { title: "Magnetic value", gridcolor: "#1f2937" }
+    });
+};
+
+function clearPlot() {
+    Plotly.purge(plotContainer);
+    plotContainer.classList.add("hidden");
+    placeholder.classList.remove("hidden");
 }

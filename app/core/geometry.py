@@ -1,162 +1,133 @@
-# app/core/geometry.py
-
-from dataclasses import dataclass
-from typing import List, Optional
-from math import hypot
+from typing import List, Dict
+import math
 
 
-# -------------------------------------------------
-# Canonical internal row
-# -------------------------------------------------
-
-@dataclass
-class GeometryRow:
-    x: float
-    y: float
-    d_along: float
-    tmi: Optional[float]
-    is_measured: int
-
-
-# -------------------------------------------------
+# ============================================================
 # Helpers
-# -------------------------------------------------
+# ============================================================
 
-def compute_d_along(points: List[dict]) -> List[float]:
+def _euclidean_distance(x1, y1, x2, y2) -> float:
+    return math.hypot(x2 - x1, y2 - y1)
+
+
+# ============================================================
+# Distance-along-traverse computation
+# ============================================================
+
+def compute_distance_along_traverse(
+    rows: List[Dict],
+    x_col: str,
+    y_col: str,
+) -> List[Dict]:
     """
-    Compute cumulative distance along traverse.
-    Uses row order. No sorting.
-    """
-    d_along = [0.0]
+    Computes cumulative distance along a traverse.
 
-    for i in range(1, len(points)):
-        dx = points[i]["x"] - points[i - 1]["x"]
-        dy = points[i]["y"] - points[i - 1]["y"]
-        d_along.append(d_along[-1] + hypot(dx, dy))
+    - Orders points by projection along the dominant axis
+    - Computes distance incrementally
+    - Adds a 'distance_along' field to each row
 
-    return d_along
-
-
-# -------------------------------------------------
-# Geometry builder
-# -------------------------------------------------
-
-def build_geometry(
-    rows: List[dict],
-    scenario: str,
-    station_spacing: Optional[float] = None,
-) -> List[GeometryRow]:
-    """
-    Build canonical geometry rows from parsed CSV rows.
-
-    rows: [{x, y, tmi}]
-    scenario: 'explicit' or 'sparse'
+    This function does NOT:
+    - assume uniform spacing
+    - modify original coordinates
     """
 
-    if scenario not in {"explicit", "sparse"}:
-        raise ValueError(f"Invalid scenario: {scenario}")
+    if len(rows) < 2:
+        raise ValueError("At least two points are required to define a traverse")
 
-    if scenario == "sparse" and station_spacing is None:
-        raise ValueError("station_spacing is required for sparse scenario")
+    # Cast coordinates to float
+    for r in rows:
+        r[x_col] = float(r[x_col])
+        r[y_col] = float(r[y_col])
 
-    # -------------------------------------------------
-    # Explicit geometry
-    # -------------------------------------------------
-    if scenario == "explicit":
-        d_values = compute_d_along(rows)
-        output: List[GeometryRow] = []
+    # Determine dominant axis (relative, not absolute)
+    xs = [r[x_col] for r in rows]
+    ys = [r[y_col] for r in rows]
 
-        for row, d in zip(rows, d_values):
-            has_value = row["tmi"] is not None
+    range_x = max(xs) - min(xs)
+    range_y = max(ys) - min(ys)
 
-            output.append(
-                GeometryRow(
-                    x=row["x"],
-                    y=row["y"],
-                    d_along=d,
-                    tmi=row["tmi"],
-                    is_measured=1 if has_value else 0,
-                )
-            )
+    dominant_axis = x_col if range_x >= range_y else y_col
 
-        return output
+    # Sort rows along dominant axis
+    rows_sorted = sorted(rows, key=lambda r: r[dominant_axis])
 
-    # -------------------------------------------------
-    # Sparse geometry
-    # -------------------------------------------------
-    # Step 1: compute d_along for original measured points
-    original_d = compute_d_along(rows)
+    # Compute cumulative distance
+    distance = 0.0
+    rows_sorted[0]["distance_along"] = distance
 
-    measured_points = []
-    for row, d in zip(rows, original_d):
-        measured_points.append(
-            {
-                "x": row["x"],
-                "y": row["y"],
-                "d_along": d,
-                "tmi": row["tmi"],
-            }
+    for i in range(1, len(rows_sorted)):
+        prev = rows_sorted[i - 1]
+        curr = rows_sorted[i]
+
+        d = _euclidean_distance(
+            prev[x_col], prev[y_col],
+            curr[x_col], curr[y_col],
         )
 
-    total_length = measured_points[-1]["d_along"]
+        distance += d
+        curr["distance_along"] = distance
 
-    # Step 2: target d_along positions
-    target_d = []
-    d = 0.0
-    while d < total_length:
-        target_d.append(d)
-        d += station_spacing
-    target_d.append(total_length)
+    return rows_sorted
 
-    # Step 3: generate points along polyline
-    output: List[GeometryRow] = []
 
-    seg_idx = 0
+# ============================================================
+# Sparse geometry generation
+# ============================================================
 
-    for d in target_d:
-        # advance segment if needed
-        while (
-            seg_idx < len(measured_points) - 2
-            and measured_points[seg_idx + 1]["d_along"] < d
-        ):
-            seg_idx += 1
+def generate_sparse_geometry(
+    rows: List[Dict],
+    spacing: float,
+    tolerance: float = 1e-6,
+) -> List[Dict]:
+    """
+    Generates missing stations along a traverse for sparse geometry.
 
-        p0 = measured_points[seg_idx]
-        p1 = measured_points[seg_idx + 1]
+    Behavior:
+    - Uses distance_along as the 1D axis
+    - Generates a regular distance grid using spacing
+    - Preserves all measured rows exactly
+    - Adds new rows ONLY where no measured row exists nearby
 
-        d0 = p0["d_along"]
-        d1 = p1["d_along"]
+    Returns:
+    - Combined list of measured + generated rows
+    """
 
-        if d1 == d0:
-            t = 0.0
-        else:
-            t = (d - d0) / (d1 - d0)
+    if spacing <= 0:
+        raise ValueError("spacing must be positive")
 
-        x = p0["x"] + t * (p1["x"] - p0["x"])
-        y = p0["y"] + t * (p1["y"] - p0["y"])
+    # Separate measured rows
+    measured = rows
 
-        # check if this matches a measured point
-        is_measured = (
-            abs(d - p0["d_along"]) < 1e-6
-            or abs(d - p1["d_along"]) < 1e-6
-        )
+    distances = [r["distance_along"] for r in measured]
 
-        tmi = None
-        if is_measured:
-            if abs(d - p0["d_along"]) < 1e-6:
-                tmi = p0["tmi"]
-            else:
-                tmi = p1["tmi"]
+    min_d = min(distances)
+    max_d = max(distances)
 
-        output.append(
-            GeometryRow(
-                x=x,
-                y=y,
-                d_along=d,
-                tmi=tmi,
-                is_measured=1 if is_measured else 0,
-            )
-        )
+    # Generate full distance grid
+    generated_distances = []
+    d = min_d
+    while d <= max_d + tolerance:
+        generated_distances.append(round(d, 6))
+        d += spacing
 
-    return output
+    # Identify existing distances
+    existing = set(round(d, 6) for d in distances)
 
+    # Generate missing stations
+    generated_rows = []
+    for d in generated_distances:
+        if d not in existing:
+            generated_rows.append({
+                "distance_along": d,
+                "__generated__": True,
+            })
+
+    # Mark measured rows explicitly
+    for r in measured:
+        r["__generated__"] = False
+
+    # Combine and sort
+    combined = measured + generated_rows
+    combined.sort(key=lambda r: r["distance_along"])
+
+    return combined

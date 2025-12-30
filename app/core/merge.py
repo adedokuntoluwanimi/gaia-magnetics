@@ -1,59 +1,42 @@
-import csv
 from typing import List, Dict
 
 
-def read_predictions_csv(path: str) -> List[float]:
-    values = []
-    with open(path, "r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            values.append(float(line))
-    return values
-
-
 def merge_measured_and_predicted(
-    original_rows: List[Dict],
-    predicted_values: List[float],
+    measured_rows: List[Dict],
+    predicted_rows: List[Dict],
+    predictions: List[float],
 ) -> List[Dict]:
     """
-    Merge rule (LOCKED):
+    measured_rows:
+        rows that already have values
 
-    - original_rows already contains:
-        x, y, d_along, tmi (or None), is_measured
-    - predicted_values are ordered
-    - Assign predictions sequentially to rows where is_measured == 0
-    - Never enforce strict count equality
+    predicted_rows:
+        rows that need values (same order used for inference)
+
+    predictions:
+        model output, same length as predicted_rows
     """
 
-    merged = []
-    pred_idx = 0
-    total_preds = len(predicted_values)
+    if len(predicted_rows) != len(predictions):
+        raise RuntimeError(
+            "Prediction count mismatch during merge"
+        )
 
-    for row in original_rows:
-        if row["is_measured"] == 1:
-            merged.append(row)
-        else:
-            if pred_idx < total_preds:
-                row["tmi"] = predicted_values[pred_idx]
-                pred_idx += 1
-            else:
-                # No prediction available, leave as None
-                row["tmi"] = None
-            merged.append(row)
+    merged: List[Dict] = []
+
+    # 1. Keep measured rows exactly as they are
+    for row in measured_rows:
+        merged.append({
+            **row,
+            "source": "measured",
+        })
+
+    # 2. Attach predictions to predicted rows
+    for row, value in zip(predicted_rows, predictions):
+        merged.append({
+            **row,
+            "value": value,
+            "source": "predicted",
+        })
 
     return merged
-
-
-def write_final_csv(rows: List[Dict], path: str) -> None:
-    if not rows:
-        return
-
-    fieldnames = ["x", "y", "d_along", "tmi", "is_measured"]
-
-    with open(path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        writer.writeheader()
-        for r in rows:
-            writer.writerow(r)

@@ -1,59 +1,49 @@
-import os
 import boto3
-from botocore.exceptions import ClientError
+from pathlib import Path
 
 
 class S3IO:
-    def __init__(self):
-        self.bucket = os.environ.get("GAIA_S3_BUCKET")
-        if not self.bucket:
-            raise RuntimeError("GAIA_S3_BUCKET environment variable not set")
-
-        self.client = boto3.client("s3")
+    def __init__(self, bucket: str, region: str = "us-east-1"):
+        self.bucket = bucket
+        self.s3 = boto3.client("s3", region_name=region)
 
     # -----------------------------
-    # Path helpers
+    # Upload
     # -----------------------------
-    def job_prefix(self, job_id: str) -> str:
-        return f"gaia/jobs/{job_id}/"
+    def upload_file(self, local_path: Path, s3_key: str):
+        if not local_path.exists():
+            raise FileNotFoundError(local_path)
 
-    def input_path(self, job_id: str, filename: str) -> str:
-        return f"{self.job_prefix(job_id)}input/{filename}"
-
-    def split_path(self, job_id: str, filename: str) -> str:
-        return f"{self.job_prefix(job_id)}split/{filename}"
-
-    def inference_path(self, job_id: str, filename: str) -> str:
-        return f"{self.job_prefix(job_id)}inference/{filename}"
-
-    def output_path(self, job_id: str, filename: str) -> str:
-        return f"{self.job_prefix(job_id)}output/{filename}"
-
-    # -----------------------------
-    # Core operations
-    # -----------------------------
-    def upload_file(self, local_path: str, s3_key: str) -> None:
-        self.client.upload_file(
-            Filename=local_path,
-            Bucket=self.bucket,
-            Key=s3_key,
+        self.s3.upload_file(
+            str(local_path),
+            self.bucket,
+            s3_key,
         )
 
-    def download_file(self, s3_key: str, local_path: str) -> None:
-        self.client.download_file(
-            Bucket=self.bucket,
-            Key=s3_key,
-            Filename=local_path,
+    # -----------------------------
+    # Download
+    # -----------------------------
+    def download_file(self, s3_key: str, local_path: Path):
+        local_path.parent.mkdir(parents=True, exist_ok=True)
+
+        self.s3.download_file(
+            self.bucket,
+            s3_key,
+            str(local_path),
         )
 
-    def exists(self, s3_key: str) -> bool:
-        try:
-            self.client.head_object(
-                Bucket=self.bucket,
-                Key=s3_key,
-            )
-            return True
-        except ClientError as e:
-            if e.response["Error"]["Code"] == "404":
-                return False
-            raise
+    # -----------------------------
+    # List objects
+    # -----------------------------
+    def list_prefix(self, prefix: str):
+        paginator = self.s3.get_paginator("list_objects_v2")
+
+        keys = []
+        for page in paginator.paginate(
+            Bucket=self.bucket,
+            Prefix=prefix,
+        ):
+            for obj in page.get("Contents", []):
+                keys.append(obj["Key"])
+
+        return keys

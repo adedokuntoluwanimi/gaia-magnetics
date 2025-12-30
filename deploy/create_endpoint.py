@@ -1,26 +1,14 @@
-import sagemaker
-from sagemaker.sklearn.model import SKLearnModel
+import boto3
 
-ROLE_ARN = "arn:aws:iam::425933242610:role/gaia-ec2-s3-role"
-BUCKET = "gaia22"
-SCRIPT_S3_PATH = "s3://gaia22/ml/inference.tar.gz"
+REGION = "us-east-1"
+ENDPOINT_NAME = "gaia-train-on-the-fly"
+CONFIG_NAME = "gaia-train-on-the-fly-config"
 
-sess = sagemaker.Session()
+sm = boto3.client("sagemaker", region_name=REGION)
 
-model = SKLearnModel(
-    model_data=None,
-    role=ROLE_ARN,
-    entry_point="inference.py",
-    source_dir=SCRIPT_S3_PATH,
-    framework_version="1.2-1",
-    py_version="py3",
-    sagemaker_session=sess,
+sm.create_endpoint(
+    EndpointName=ENDPOINT_NAME,
+    EndpointConfigName=CONFIG_NAME,
 )
 
-predictor = model.deploy(
-    instance_type="ml.m5.large",
-    initial_instance_count=1,
-    endpoint_name="gaia-train-on-the-fly",
-)
-
-print("Endpoint deployed:", predictor.endpoint_name)
+print("Endpoint creation started:", ENDPOINT_NAME)

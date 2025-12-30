@@ -17,9 +17,9 @@ router = APIRouter(prefix="/jobs", tags=["jobs"])
 # Config (explicit, no magic)
 # -------------------------------------------------
 
-S3_BUCKET = "YOUR_BUCKET_NAME"
-AWS_REGION = "YOUR_REGION"
-SAGEMAKER_ENDPOINT = "YOUR_ENDPOINT_NAME"
+S3_BUCKET = "gaia"
+AWS_REGION = "us-east-1"
+SAGEMAKER_ENDPOINT = "gaia-train-on-the-fly"
 
 
 def get_job_runner() -> JobRunner:

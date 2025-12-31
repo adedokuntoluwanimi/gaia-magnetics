@@ -2,6 +2,9 @@ import json
 import boto3
 from datetime import datetime
 from app.core.config import settings
+from app.core.config import settings
+print("JOB_STORE_BUCKET =", settings.s3_bucket)
+
 
 s3 = boto3.client(
     "s3",

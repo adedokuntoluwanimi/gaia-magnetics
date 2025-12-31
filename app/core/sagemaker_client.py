@@ -3,6 +3,7 @@
 import json
 import boto3
 from app.core.config import settings
+from app.core.s3_io import upload_raw_csv
 
 
 class SageMakerClient:
@@ -11,8 +12,6 @@ class SageMakerClient:
             "sagemaker-runtime",
             region_name=settings.aws_region,
         )
-
-        # name of your deployed async endpoint
         self.endpoint_name = settings.sagemaker_endpoint_name
 
     def invoke_async(
@@ -29,10 +28,24 @@ class SageMakerClient:
             "output_s3": output_s3,
         }
 
+        # 1. Upload request JSON to S3
+        request_key = "inference/request.json"
+
+        upload_raw_csv(
+            job_id=job_id,
+            content=json.dumps(payload).encode(),
+            filename=request_key,
+        )
+
+        # 2. Invoke async endpoint with S3 URI
+        input_location = (
+            f"s3://{settings.s3_bucket}/jobs/{job_id}/{request_key}"
+        )
+
         response = self.client.invoke_endpoint_async(
             EndpointName=self.endpoint_name,
             ContentType="application/json",
-            InputLocation=json.dumps(payload),
+            InputLocation=input_location,
         )
 
         return response

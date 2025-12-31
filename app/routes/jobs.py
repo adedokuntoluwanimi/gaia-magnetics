@@ -1,3 +1,4 @@
+from urllib import request
 import uuid
 from fastapi import (
     APIRouter,
@@ -9,8 +10,10 @@ from fastapi import (
 
 from app.core.job_store import create_job_record, get_job_record
 from app.core.job_runner import JobRunner
-from app.schemas.job import Scenario
+from app.schemas.job import JobCreateRequest, Scenario
 from typing import Optional
+from app.schemas.job import JobCreateRequest, Scenario
+
 
 
 
@@ -53,16 +56,16 @@ async def create_job(
     create_job_record(job_id)
 
     # hand off to pipeline
+    request =JobCreateRequest(
+    scenario=scenario,
+    x_column=x_column,
+    y_column=y_column,
+    value_column=value_column,
+    station_spacing=station_spacing,
+)
+
     runner = JobRunner(job_id)
-    runner.run(
-        job_id=job_id,
-        scenario=scenario.value,
-        csv_bytes=content,
-        x_col=x_column,
-        y_col=y_column,
-        value_col=value_column,
-        station_spacing=station_spacing,
-    )
+    await runner.run(csv_file, request)
 
     return {
         "job_id": job_id,

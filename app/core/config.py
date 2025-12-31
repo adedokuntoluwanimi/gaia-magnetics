@@ -3,8 +3,8 @@ from pydantic import BaseSettings
 
 
 class Settings(BaseSettings):
-    S3_BUCKET = "gaia-ml-dev"
-    AWS_REGION = "us-east-1"
+    s3_bucket = "gaia-ml-dev"
+    aws_region = "us-east-1"
 
 
     class Config:

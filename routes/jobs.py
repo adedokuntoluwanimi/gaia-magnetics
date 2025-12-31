@@ -1,16 +1,35 @@
 import uuid
-from fastapi import APIRouter, UploadFile, File, HTTPException
+from fastapi import (
+    APIRouter,
+    UploadFile,
+    File,
+    Form,
+    HTTPException,
+)
 
-from app.core.s3_io import upload_raw_csv
-from app.core.job_store import create_job_record
-from app.core.job_store import get_job_record
+from app.core.job_store import create_job_record, get_job_record
+from app.core.job_runner import JobRunner
+from app.schemas.job import Scenario
 
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 
 
 @router.post("")
-async def create_job(csv_file: UploadFile = File(...)):
+async def create_job(
+    csv_file: UploadFile = File(...),
+
+    # scenario selection
+    scenario: Scenario = Form(...),
+
+    # column mappings
+    x_column: str = Form(...),
+    y_column: str = Form(...),
+    value_column: str = Form(...),
+
+    # optional for sparse geometry
+    station_spacing: float | None = Form(None),
+):
     if not csv_file.filename.endswith(".csv"):
         raise HTTPException(status_code=400, detail="Only CSV files are allowed")
 
@@ -18,21 +37,33 @@ async def create_job(csv_file: UploadFile = File(...)):
     if not content:
         raise HTTPException(status_code=400, detail="Empty CSV file")
 
+    if scenario == Scenario.SPARSE and station_spacing is None:
+        raise HTTPException(
+            status_code=400,
+            detail="station_spacing is required for sparse geometry",
+        )
+
     job_id = f"gaia-{uuid.uuid4().hex}"
 
+    # create job metadata first
     create_job_record(job_id)
 
-    upload_raw_csv(
+    # hand off to pipeline
+    runner = JobRunner()
+    runner.run(
         job_id=job_id,
-        content=content,
-        filename=csv_file.filename,
+        scenario=scenario.value,
+        csv_bytes=content,
+        x_col=x_column,
+        y_col=y_column,
+        value_col=value_column,
+        station_spacing=station_spacing,
     )
 
     return {
         "job_id": job_id,
-        "status": "created",
+        "status": "running",
     }
-
 
 
 @router.get("/{job_id}/status")

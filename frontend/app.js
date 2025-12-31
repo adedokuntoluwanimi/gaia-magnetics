@@ -20,7 +20,9 @@ const plotContainer = document.getElementById("plot-container");
 let currentJobId = null;
 let pollInterval = null;
 
-/* ================= CSV HEADER PARSING ================= */
+/* =========================================================
+   CSV HEADER PARSING
+========================================================= */
 
 csvInput.addEventListener("change", () => {
     const file = csvInput.files[0];
@@ -47,24 +49,40 @@ function populateDropdowns(headers) {
     });
 }
 
-/* ================= SCENARIO LOGIC ================= */
+/* =========================================================
+   SCENARIO LOGIC (AUTHORITATIVE)
+========================================================= */
 
-scenarioSelect.addEventListener("change", () => {
+function applyScenarioRules() {
     if (scenarioSelect.value === "sparse") {
+        // Sparse → spacing REQUIRED
+        spacingInput.disabled = false;
+        spacingSection.style.opacity = "1";
+    } else {
+        // Explicit → spacing FORBIDDEN
         spacingInput.disabled = true;
         spacingInput.value = "";
         spacingSection.style.opacity = "0.4";
-    } else {
-        spacingInput.disabled = false;
-        spacingSection.style.opacity = "1";
     }
-});
+}
 
-/* ================= CREATE JOB ================= */
+scenarioSelect.addEventListener("change", applyScenarioRules);
+
+// Apply rules on initial load
+applyScenarioRules();
+
+/* =========================================================
+   CREATE JOB
+========================================================= */
 
 createJobBtn.addEventListener("click", async () => {
     if (!csvInput.files.length) {
         alert("Upload a CSV file");
+        return;
+    }
+
+    if (scenarioSelect.value === "sparse" && !spacingInput.value) {
+        alert("Output station spacing is required for sparse geometry");
         return;
     }
 
@@ -75,7 +93,7 @@ createJobBtn.addEventListener("click", async () => {
     formData.append("y_column", ySelect.value);
     formData.append("value_column", valueSelect.value);
 
-    if (!spacingInput.disabled && spacingInput.value) {
+    if (scenarioSelect.value === "sparse") {
         formData.append("station_spacing", spacingInput.value);
     }
 
@@ -83,19 +101,31 @@ createJobBtn.addEventListener("click", async () => {
     resultActions.classList.add("hidden");
     clearPlot();
 
-    const res = await fetch("/jobs", { method: "POST", body: formData });
-    const data = await res.json();
+    const res = await fetch("/jobs", {
+        method: "POST",
+        body: formData
+    });
 
+    if (!res.ok) {
+        alert("Job creation failed");
+        return;
+    }
+
+    const data = await res.json();
     currentJobId = data.job_id;
     startPolling();
 });
 
-/* ================= POLLING ================= */
+/* =========================================================
+   POLLING
+========================================================= */
 
 function startPolling() {
     stopPolling();
     pollInterval = setInterval(async () => {
         const res = await fetch(`/jobs/${currentJobId}/status`);
+        if (!res.ok) return;
+
         const data = await res.json();
         jobStatusEl.textContent = data.status.toUpperCase();
 
@@ -103,23 +133,37 @@ function startPolling() {
             stopPolling();
             resultActions.classList.remove("hidden");
         }
+
+        if (data.status === "failed") {
+            stopPolling();
+            alert("Job failed");
+        }
     }, 2000);
 }
 
 function stopPolling() {
-    if (pollInterval) clearInterval(pollInterval);
+    if (pollInterval) {
+        clearInterval(pollInterval);
+        pollInterval = null;
+    }
 }
 
-/* ================= DOWNLOAD ================= */
+/* =========================================================
+   DOWNLOAD
+========================================================= */
 
 downloadBtn.onclick = () => {
     window.location.href = `/jobs/${currentJobId}/result.csv`;
 };
 
-/* ================= PLOT ================= */
+/* =========================================================
+   PLOT
+========================================================= */
 
 plotBtn.onclick = async () => {
     const res = await fetch(`/jobs/${currentJobId}/result.json`);
+    if (!res.ok) return;
+
     const rows = await res.json();
 
     const measured = rows.filter(r => r.source === "measured");
@@ -152,8 +196,14 @@ plotBtn.onclick = async () => {
         paper_bgcolor: "#0e1117",
         plot_bgcolor: "#0e1117",
         font: { color: "#e5e7eb" },
-        xaxis: { title: "Distance along traverse", gridcolor: "#1f2937" },
-        yaxis: { title: "Magnetic value", gridcolor: "#1f2937" }
+        xaxis: {
+            title: "Distance along traverse",
+            gridcolor: "#1f2937"
+        },
+        yaxis: {
+            title: "Magnetic value",
+            gridcolor: "#1f2937"
+        }
     });
 };
 

@@ -4,8 +4,10 @@
     <meta charset="UTF-8" />
     <title>GAIA Magnetics</title>
 
-    <link rel="icon" type="image/png" href="images/favicon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
     <link rel="stylesheet" href="styles.css" />
+    <link rel="icon" type="image/png" href="images/favicon.png" />
 
     <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
 </head>
@@ -13,13 +15,13 @@
 <body>
 <div id="app">
 
-    <!-- ========================================= -->
-    <!-- Left Control Panel -->
-    <!-- ========================================= -->
+    <!-- ================= LEFT CONTROL PANEL ================= -->
+
     <aside id="control-panel">
 
         <div class="panel-header">
-            <div class="brand">GEODEV</div>
+            <div class="brand">GAIA</div>
+            <div class="subtitle">MAGNETICS</div>
         </div>
 
         <div class="panel-section">
@@ -28,7 +30,7 @@
         </div>
 
         <div class="panel-section">
-            <label>Scenario</label>
+            <label>Geometry scenario</label>
             <select id="scenario">
                 <option value="explicit">Explicit geometry</option>
                 <option value="sparse">Sparse geometry</option>
@@ -52,7 +54,13 @@
 
         <div class="panel-section" id="spacing-section">
             <label>Output station spacing (m)</label>
-            <input type="number" id="station-spacing" step="0.1" />
+            <input
+                type="number"
+                id="station-spacing"
+                step="0.1"
+                min="0"
+                placeholder="Required for sparse geometry"
+            />
         </div>
 
         <div class="panel-section">
@@ -60,23 +68,22 @@
         </div>
 
         <div class="panel-section status-section">
-            <span id="job-status">Idle</span>
+            <span id="job-status">IDLE</span>
         </div>
 
         <div class="panel-footer hidden" id="result-actions">
             <button id="download-btn">Download CSV</button>
-            <button id="plot-btn">Plot graph</button>
+            <button id="plot-btn">Plot</button>
         </div>
 
     </aside>
 
-    <!-- ========================================= -->
-    <!-- Main Canvas -->
-    <!-- ========================================= -->
+    <!-- ================= MAIN CANVAS ================= -->
+
     <main id="main-canvas">
 
         <div id="canvas-header">
-            GEOSPATIAL AUTOMATION AND INTELLIGENT EARTH ANALYSIS – MAGNETICS
+            GEOSPATIAL MAGNETICS INFERENCE
         </div>
 
         <div id="canvas-placeholder">

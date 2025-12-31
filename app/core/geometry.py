@@ -22,24 +22,25 @@ def compute_distance_along_traverse(
     """
     Computes cumulative distance along a traverse.
 
-    - Orders points by projection along the dominant axis
-    - Computes distance incrementally
-    - Adds a 'distance_along' field to each row
+    Behavior:
+    - Orders points along the dominant axis
+    - Computes cumulative Euclidean distance
+    - Adds 'distance_along' to every row
 
-    This function does NOT:
+    Does NOT:
     - assume uniform spacing
-    - modify original coordinates
+    - generate or remove rows
+    - touch magnetic values
     """
 
     if len(rows) < 2:
         raise ValueError("At least two points are required to define a traverse")
 
-    # Cast coordinates to float
+    # Cast coordinates
     for r in rows:
         r[x_col] = float(r[x_col])
         r[y_col] = float(r[y_col])
 
-    # Determine dominant axis (relative, not absolute)
     xs = [r[x_col] for r in rows]
     ys = [r[y_col] for r in rows]
 
@@ -48,10 +49,8 @@ def compute_distance_along_traverse(
 
     dominant_axis = x_col if range_x >= range_y else y_col
 
-    # Sort rows along dominant axis
     rows_sorted = sorted(rows, key=lambda r: r[dominant_axis])
 
-    # Compute cumulative distance
     distance = 0.0
     rows_sorted[0]["distance_along"] = distance
 
@@ -80,54 +79,43 @@ def generate_sparse_geometry(
     tolerance: float = 1e-6,
 ) -> List[Dict]:
     """
-    Generates missing stations along a traverse for sparse geometry.
+    Generates missing stations for sparse geometry.
 
-    Behavior:
+    Rules:
     - Uses distance_along as the 1D axis
-    - Generates a regular distance grid using spacing
     - Preserves all measured rows exactly
-    - Adds new rows ONLY where no measured row exists nearby
+    - Generates new rows only at missing distances
+    - Generated rows contain ONLY distance_along
+    - Magnetic values are intentionally absent
 
-    Returns:
-    - Combined list of measured + generated rows
+    Geometry only. No train/predict logic here.
     """
 
     if spacing <= 0:
         raise ValueError("spacing must be positive")
 
-    # Separate measured rows
-    measured = rows
-
-    distances = [r["distance_along"] for r in measured]
+    distances = [float(r["distance_along"]) for r in rows]
 
     min_d = min(distances)
     max_d = max(distances)
 
-    # Generate full distance grid
-    generated_distances = []
+    # Build regular distance grid
+    grid = []
     d = min_d
     while d <= max_d + tolerance:
-        generated_distances.append(round(d, 6))
+        grid.append(round(d, 6))
         d += spacing
 
-    # Identify existing distances
     existing = set(round(d, 6) for d in distances)
 
-    # Generate missing stations
     generated_rows = []
-    for d in generated_distances:
+    for d in grid:
         if d not in existing:
             generated_rows.append({
-                "distance_along": d,
-                "__generated__": True,
+                "distance_along": d
             })
 
-    # Mark measured rows explicitly
-    for r in measured:
-        r["__generated__"] = False
-
-    # Combine and sort
-    combined = measured + generated_rows
-    combined.sort(key=lambda r: r["distance_along"])
+    combined = rows + generated_rows
+    combined.sort(key=lambda r: float(r["distance_along"]))
 
     return combined

@@ -1,51 +1,34 @@
+# app/core/csv_splitter.py
+
 from typing import List, Dict, Tuple
-
-
-def _has_value(row: Dict, value_col: str) -> bool:
-    """
-    Determines whether a row contains a usable magnetic value.
-    """
-    if value_col not in row:
-        return False
-
-    val = row[value_col]
-
-    if val is None:
-        return False
-
-    if isinstance(val, str):
-        return val.strip() != ""
-
-    return True
 
 
 def split_train_predict(
     rows: List[Dict],
+    *,
     value_col: str,
 ) -> Tuple[List[Dict], List[Dict]]:
     """
-    Splits rows into training and prediction sets.
+    Splits rows into train and predict sets.
 
     Rules:
-    - Train rows: value_col exists and is non-empty
-    - Predict rows: value_col missing or empty
-    - distance_along must already exist
+    - train: is_measured == True AND value exists
+    - predict: is_measured == False AND value missing
     """
 
-    train_rows = []
-    predict_rows = []
+    train: List[Dict] = []
+    predict: List[Dict] = []
 
-    for row in rows:
-        if "distance_along" not in row:
-            raise ValueError("distance_along missing before split")
+    for r in rows:
+        is_measured = bool(r.get("is_measured", False))
+        val = r.get(value_col, "")
 
-        if _has_value(row, value_col):
-            r = dict(row)
-            r[value_col] = float(r[value_col])
-            train_rows.append(r)
-        else:
-            r = dict(row)
-            r.pop(value_col, None)
-            predict_rows.append(r)
+        has_value = val not in ("", None)
 
-    return train_rows, predict_rows
+        if is_measured and has_value:
+            train.append(r)
+
+        elif (not is_measured) and (not has_value):
+            predict.append(r)
+
+    return train, predict

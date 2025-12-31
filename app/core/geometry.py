@@ -1,18 +1,8 @@
+# app/core/geometry.py
+
+from math import hypot
 from typing import List, Dict
-import math
 
-
-# ============================================================
-# Helpers
-# ============================================================
-
-def _euclidean_distance(x1, y1, x2, y2) -> float:
-    return math.hypot(x2 - x1, y2 - y1)
-
-
-# ============================================================
-# Distance-along-traverse computation
-# ============================================================
 
 def compute_distance_along_traverse(
     rows: List[Dict],
@@ -20,102 +10,82 @@ def compute_distance_along_traverse(
     y_col: str,
 ) -> List[Dict]:
     """
-    Computes cumulative distance along a traverse.
-
-    Behavior:
-    - Orders points along the dominant axis
-    - Computes cumulative Euclidean distance
-    - Adds 'distance_along' to every row
-
-    Does NOT:
-    - assume uniform spacing
-    - generate or remove rows
-    - touch magnetic values
+    Computes cumulative distance along traverse.
+    Adds `d_along` to every row.
     """
+    d = 0.0
+    prev = None
 
-    if len(rows) < 2:
-        raise ValueError("At least two points are required to define a traverse")
-
-    # Cast coordinates
     for r in rows:
-        r[x_col] = float(r[x_col])
-        r[y_col] = float(r[y_col])
+        x = float(r[x_col])
+        y = float(r[y_col])
 
-    xs = [r[x_col] for r in rows]
-    ys = [r[y_col] for r in rows]
+        if prev is not None:
+            d += hypot(x - prev[0], y - prev[1])
 
-    range_x = max(xs) - min(xs)
-    range_y = max(ys) - min(ys)
+        r["d_along"] = d
+        prev = (x, y)
 
-    dominant_axis = x_col if range_x >= range_y else y_col
+    return rows
 
-    rows_sorted = sorted(rows, key=lambda r: r[dominant_axis])
-
-    distance = 0.0
-    rows_sorted[0]["distance_along"] = distance
-
-    for i in range(1, len(rows_sorted)):
-        prev = rows_sorted[i - 1]
-        curr = rows_sorted[i]
-
-        d = _euclidean_distance(
-            prev[x_col], prev[y_col],
-            curr[x_col], curr[y_col],
-        )
-
-        distance += d
-        curr["distance_along"] = distance
-
-    return rows_sorted
-
-
-# ============================================================
-# Sparse geometry generation
-# ============================================================
 
 def generate_sparse_geometry(
     rows: List[Dict],
+    *,
+    x_col: str,
+    y_col: str,
+    value_col: str,
     spacing: float,
-    tolerance: float = 1e-6,
 ) -> List[Dict]:
     """
-    Generates missing stations for sparse geometry.
+    Inserts uniform-spacing geometry rows between measured stations.
 
     Rules:
-    - Uses distance_along as the 1D axis
-    - Preserves all measured rows exactly
-    - Generates new rows only at missing distances
-    - Generated rows contain ONLY distance_along
-    - Magnetic values are intentionally absent
-
-    Geometry only. No train/predict logic here.
+    - Original rows are measured
+    - Inserted rows are unmeasured
+    - Boundary stations remain measured
     """
 
-    if spacing <= 0:
-        raise ValueError("spacing must be positive")
+    # Enforce ordering
+    rows = sorted(rows, key=lambda r: r["d_along"])
 
-    distances = [float(r["distance_along"]) for r in rows]
+    # Mark originals
+    for r in rows:
+        r["is_measured"] = True
 
-    min_d = min(distances)
-    max_d = max(distances)
+    out: List[Dict] = []
 
-    # Build regular distance grid
-    grid = []
-    d = min_d
-    while d <= max_d + tolerance:
-        grid.append(round(d, 6))
-        d += spacing
+    for i in range(len(rows) - 1):
+        a = rows[i]
+        b = rows[i + 1]
 
-    existing = set(round(d, 6) for d in distances)
+        out.append(a)
 
-    generated_rows = []
-    for d in grid:
-        if d not in existing:
-            generated_rows.append({
-                "distance_along": d
-            })
+        da = a["d_along"]
+        db = b["d_along"]
+        gap = db - da
 
-    combined = rows + generated_rows
-    combined.sort(key=lambda r: float(r["distance_along"]))
+        if gap <= spacing:
+            continue
 
-    return combined
+        steps = int(gap // spacing)
+
+        for k in range(1, steps + 1):
+            d_new = da + k * spacing
+            if d_new >= db:
+                break
+
+            t = (d_new - da) / gap
+
+            out.append(
+                {
+                    x_col: float(a[x_col]) + t * (float(b[x_col]) - float(a[x_col])),
+                    y_col: float(a[y_col]) + t * (float(b[y_col]) - float(a[y_col])),
+                    "d_along": d_new,
+                    value_col: "",
+                    "is_measured": False,
+                }
+            )
+
+    out.append(rows[-1])
+    return out

@@ -1,58 +1,43 @@
+# app/core/merge.py
+
+import csv
 from typing import List, Dict
 
 
-def merge_measured_and_predicted(
-    train_rows: List[Dict],
-    predicted_rows: List[Dict],
-    value_col: str = "magnetic_value",
+def merge_predictions(
+    geometry_rows: List[Dict],
+    predictions_rows: List[Dict],
+    value_col: str,
+    pred_col: str = "predicted_value",
 ) -> List[Dict]:
     """
-    Merge measured and predicted rows into a final ordered dataset.
-
-    Rules:
-    - Measured rows are preserved exactly
-    - Predicted rows are appended without overwriting
-    - A 'source' field identifies row origin
-    - Output is sorted strictly by distance_along
+    Merge predicted values back into geometry rows.
+    Geometry rows already contain is_measured and distance_along.
     """
+
+    pred_map = {
+        float(r["distance_along"]): r[pred_col]
+        for r in predictions_rows
+    }
 
     merged = []
 
-    # ----------------------------
-    # Measured rows
-    # ----------------------------
-    for row in train_rows:
-        if "distance_along" not in row:
-            raise ValueError("Measured row missing distance_along")
+    for r in geometry_rows:
+        row = dict(r)
+        d = float(row["distance_along"])
 
-        if value_col not in row:
-            raise ValueError("Measured row missing magnetic value")
+        if not row.get("is_measured", False):
+            if d not in pred_map:
+                raise ValueError(f"Missing prediction for distance {d}")
+            row[value_col] = pred_map[d]
 
-        merged.append({
-            "distance_along": float(row["distance_along"]),
-            "magnetic_value": float(row[value_col]),
-            "source": "measured",
-        })
-
-    # ----------------------------
-    # Predicted rows
-    # ----------------------------
-    for row in predicted_rows:
-        if "distance_along" not in row:
-            raise ValueError("Predicted row missing distance_along")
-
-        if value_col not in row:
-            raise ValueError("Predicted row missing magnetic value")
-
-        merged.append({
-            "distance_along": float(row["distance_along"]),
-            "magnetic_value": float(row[value_col]),
-            "source": "predicted",
-        })
-
-    # ----------------------------
-    # Sort
-    # ----------------------------
-    merged.sort(key=lambda r: r["distance_along"])
+        merged.append(row)
 
     return merged
+
+
+def write_csv(path: str, rows: List[Dict]):
+    with open(path, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=rows[0].keys())
+        writer.writeheader()
+        writer.writerows(rows)

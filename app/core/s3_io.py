@@ -1,19 +1,17 @@
-import os
 import boto3
+from app.core.config import settings
 
-S3_BUCKET = os.getenv("GAIA_S3_BUCKET")
-
-if not S3_BUCKET:
-    raise RuntimeError("GAIA_S3_BUCKET environment variable not set")
-
-s3 = boto3.client("s3")
+s3 = boto3.client(
+    "s3",
+    region_name=settings.aws_region,
+)
 
 
-def upload_raw_csv(job_id: str, content: bytes, filename: str):
+def upload_raw_csv(job_id: str, content: bytes, filename: str) -> str:
     key = f"jobs/{job_id}/input/{filename}"
 
     s3.put_object(
-        Bucket=S3_BUCKET,
+        Bucket=settings.s3_bucket,
         Key=key,
         Body=content,
         ContentType="text/csv",

@@ -53,7 +53,7 @@ async def create_job(
     create_job_record(job_id)
 
     # hand off to pipeline
-    runner = JobRunner()
+    runner = JobRunner(job_id)
     runner.run(
         job_id=job_id,
         scenario=scenario.value,

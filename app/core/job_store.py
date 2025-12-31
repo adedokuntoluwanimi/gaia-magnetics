@@ -1,9 +1,8 @@
 import json
-import boto3
 from datetime import datetime
+import boto3
+
 from app.core.config import settings
-from app.core.config import settings
-print("JOB_STORE_BUCKET =", settings.s3_bucket)
 
 
 s3 = boto3.client(
@@ -26,7 +25,7 @@ def create_job_record(job_id: str):
     s3.put_object(
         Bucket=settings.s3_bucket,
         Key=_job_key(job_id),
-        Body=json.dumps(record).encode(),
+        Body=json.dumps(record).encode("utf-8"),
         ContentType="application/json",
     )
 
@@ -34,19 +33,15 @@ def create_job_record(job_id: str):
 
 
 def update_job_status(job_id: str, status: str):
-    obj = s3.get_object(
-        Bucket=settings.s3_bucket,
-        Key=_job_key(job_id),
-    )
+    record = get_job_record(job_id)
 
-    record = json.loads(obj["Body"].read())
     record["status"] = status
     record["updated_at"] = datetime.utcnow().isoformat()
 
     s3.put_object(
         Bucket=settings.s3_bucket,
         Key=_job_key(job_id),
-        Body=json.dumps(record).encode(),
+        Body=json.dumps(record).encode("utf-8"),
         ContentType="application/json",
     )
 
@@ -54,9 +49,15 @@ def update_job_status(job_id: str, status: str):
 
 
 def get_job_record(job_id: str):
-    obj = s3.get_object(
-        Bucket=settings.s3_bucket,
-        Key=_job_key(job_id),
-    )
-
-    return json.loads(obj["Body"].read())
+    try:
+        obj = s3.get_object(
+            Bucket=settings.s3_bucket,
+            Key=_job_key(job_id),
+        )
+        return json.loads(obj["Body"].read())
+    except s3.exceptions.NoSuchKey:
+        # Defensive: job was requested before record creation
+        return {
+            "job_id": job_id,
+            "status": "unknown",
+        }

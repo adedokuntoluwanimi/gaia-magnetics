@@ -10,6 +10,8 @@ from fastapi import (
 from app.core.job_store import create_job_record, get_job_record
 from app.core.job_runner import JobRunner
 from app.schemas.job import Scenario
+from typing import Optional
+
 
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
@@ -28,7 +30,8 @@ async def create_job(
     value_column: str = Form(...),
 
     # optional for sparse geometry
-    station_spacing: float | None = Form(None),
+    station_spacing: Optional[float] = Form(None),
+
 ):
     if not csv_file.filename.endswith(".csv"):
         raise HTTPException(status_code=400, detail="Only CSV files are allowed")

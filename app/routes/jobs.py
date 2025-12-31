@@ -1,5 +1,6 @@
-from urllib import request
 import uuid
+from typing import Optional
+
 from fastapi import (
     APIRouter,
     UploadFile,
@@ -8,13 +9,9 @@ from fastapi import (
     HTTPException,
 )
 
-from app.core.job_store import create_job_record, get_job_record
+from app.core.job_store import get_job_record
 from app.core.job_runner import JobRunner
 from app.schemas.job import JobCreateRequest, Scenario
-from typing import Optional
-from app.schemas.job import JobCreateRequest, Scenario
-
-
 
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
@@ -32,19 +29,13 @@ async def create_job(
     y_column: str = Form(...),
     value_column: str = Form(...),
 
-    # optional for sparse geometry
+    # required only for sparse
     station_spacing: Optional[float] = Form(None),
-
 ):
     if not csv_file.filename.endswith(".csv"):
         raise HTTPException(status_code=400, detail="Only CSV files are allowed")
 
-    content = await csv_file.read()
-    if not content:
-        raise HTTPException(status_code=400, detail="Empty CSV file")
-
     if scenario == Scenario.sparse and station_spacing is None:
-
         raise HTTPException(
             status_code=400,
             detail="station_spacing is required for sparse geometry",
@@ -52,17 +43,13 @@ async def create_job(
 
     job_id = f"gaia-{uuid.uuid4().hex}"
 
-    # create job metadata first
-    create_job_record(job_id)
-
-    # hand off to pipeline
-    request =JobCreateRequest(
-    scenario=scenario,
-    x_column=x_column,
-    y_column=y_column,
-    value_column=value_column,
-    station_spacing=station_spacing,
-)
+    request = JobCreateRequest(
+        scenario=scenario,
+        x_column=x_column,
+        y_column=y_column,
+        value_column=value_column,
+        station_spacing=station_spacing,
+    )
 
     runner = JobRunner(job_id)
     await runner.run(csv_file, request)

@@ -40,7 +40,8 @@ async def create_job(
     if not content:
         raise HTTPException(status_code=400, detail="Empty CSV file")
 
-    if scenario == Scenario.SPARSE and station_spacing is None:
+    if scenario == Scenario.sparse and station_spacing is None:
+
         raise HTTPException(
             status_code=400,
             detail="station_spacing is required for sparse geometry",

@@ -1,13 +1,15 @@
 import json
 import boto3
-import os
 from datetime import datetime
+from app.core.config import settings
 
-S3_BUCKET = os.getenv("GAIA_S3_BUCKET")
-s3 = boto3.client("s3")
+s3 = boto3.client(
+    "s3",
+    region_name=settings.aws_region,
+)
 
 
-def _job_key(job_id: str):
+def _job_key(job_id: str) -> str:
     return f"jobs/{job_id}/metadata/job.json"
 
 
@@ -19,7 +21,7 @@ def create_job_record(job_id: str):
     }
 
     s3.put_object(
-        Bucket=S3_BUCKET,
+        Bucket=settings.s3_bucket,
         Key=_job_key(job_id),
         Body=json.dumps(record).encode(),
         ContentType="application/json",
@@ -29,14 +31,17 @@ def create_job_record(job_id: str):
 
 
 def update_job_status(job_id: str, status: str):
-    obj = s3.get_object(Bucket=S3_BUCKET, Key=_job_key(job_id))
-    record = json.loads(obj["Body"].read())
+    obj = s3.get_object(
+        Bucket=settings.s3_bucket,
+        Key=_job_key(job_id),
+    )
 
+    record = json.loads(obj["Body"].read())
     record["status"] = status
     record["updated_at"] = datetime.utcnow().isoformat()
 
     s3.put_object(
-        Bucket=S3_BUCKET,
+        Bucket=settings.s3_bucket,
         Key=_job_key(job_id),
         Body=json.dumps(record).encode(),
         ContentType="application/json",
@@ -46,5 +51,9 @@ def update_job_status(job_id: str, status: str):
 
 
 def get_job_record(job_id: str):
-    obj = s3.get_object(Bucket=S3_BUCKET, Key=_job_key(job_id))
+    obj = s3.get_object(
+        Bucket=settings.s3_bucket,
+        Key=_job_key(job_id),
+    )
+
     return json.loads(obj["Body"].read())

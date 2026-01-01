@@ -1,5 +1,3 @@
-# app/core/job_runner.py
-
 import csv
 import time
 from typing import List, Dict
@@ -26,7 +24,8 @@ from app.core.config import settings
 
 class JobRunner:
     """
-    Executes a GAIA job as a strict linear pipeline.
+    Executes a GAIA Magnetics job using SageMaker Batch Transform.
+    One job = one traverse = one transform job.
     """
 
     def __init__(self, job_id: str):
@@ -53,7 +52,7 @@ class JobRunner:
             rows = self._parse_csv(raw)
 
             # --------------------------------------------------
-            # 2. Distance computation
+            # 2. Compute distance_along
             # --------------------------------------------------
             rows = compute_distance_along_traverse(
                 rows,
@@ -81,53 +80,62 @@ class JobRunner:
             # --------------------------------------------------
             # 4. Split train / predict
             # --------------------------------------------------
-            train, predict = split_train_predict(
+            train_rows, predict_rows = split_train_predict(
                 rows,
                 value_col=request.value_column,
             )
 
-            if not train:
+            if not train_rows:
                 raise ValueError("No measured rows for training")
 
-            if not predict:
+            if not predict_rows:
                 raise ValueError("No rows to predict")
 
-            self._upload_csv("input/train.csv", train)
-            self._upload_csv("input/predict.csv", predict)
+            self._upload_csv("input/train.csv", train_rows)
+            self._upload_csv("input/predict.csv", predict_rows)
 
             # --------------------------------------------------
-            # 5. Invoke SageMaker async endpoint
+            # 5. Run Batch Transform
             # --------------------------------------------------
             sm = SageMakerClient()
             bucket = settings.s3_bucket
             job = self.job_id
 
-            sm.invoke_async(
+            train_prefix = f"s3://{bucket}/jobs/{job}/input/train/"
+            predict_prefix = f"s3://{bucket}/jobs/{job}/input/predict/"
+            output_prefix = f"s3://{bucket}/jobs/{job}/inference/"
+
+            transform_job_name = sm.run_batch_transform(
                 job_id=job,
-                train_s3=f"s3://{bucket}/jobs/{job}/input/train.csv",
-                predict_s3=f"s3://{bucket}/jobs/{job}/input/predict.csv",
-                output_s3=f"s3://{bucket}/jobs/{job}/inference/predictions.csv",
+                train_s3_prefix=train_prefix,
+                predict_s3_prefix=predict_prefix,
+                output_s3_prefix=output_prefix,
             )
 
+            sm.wait_for_transform(transform_job_name)
+
             # --------------------------------------------------
-            # 6. Poll S3 for predictions
+            # 6. Fetch predictions
             # --------------------------------------------------
-            for _ in range(120):  # 10 minutes max
-                if object_exists(job, "inference/predictions.csv"):
-                    break
-                time.sleep(5)
-            else:
-                raise TimeoutError("SageMaker inference timed out")
+            # Batch Transform writes files with arbitrary names.
+            # We assume a single output file and normalize it.
+            output_key = "inference/predictions.csv"
+
+            if not object_exists(job, output_key):
+                # Fallback: read first object under inference/
+                raw_pred = download_csv(job, "inference/")
+                upload_raw_csv(
+                    job_id=job,
+                    content=raw_pred,
+                    filename=output_key,
+                )
+
+            preds_raw = download_csv(job, output_key)
+            predictions = self._parse_csv(preds_raw)
 
             # --------------------------------------------------
             # 7. Merge predictions
             # --------------------------------------------------
-            preds_raw = download_csv(
-                job,
-                "inference/predictions.csv",
-            )
-            predictions = self._parse_csv(preds_raw)
-
             final_rows = merge_predictions(
                 geometry_rows=rows,
                 predictions_rows=predictions,

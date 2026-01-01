@@ -1,51 +1,94 @@
-# app/core/sagemaker_client.py
-
-import json
+import time
 import boto3
 from app.core.config import settings
-from app.core.s3_io import upload_raw_csv
 
 
 class SageMakerClient:
+    """
+    Handles SageMaker Batch Transform jobs for GAIA Magnetics.
+    One job = one traverse = one transform job.
+    """
+
     def __init__(self):
-        self.client = boto3.client(
-            "sagemaker-runtime",
+        self.sm = boto3.client(
+            "sagemaker",
             region_name=settings.aws_region,
         )
-        self.endpoint_name = settings.sagemaker_endpoint_name
 
-    def invoke_async(
+    def run_batch_transform(
         self,
         job_id: str,
-        train_s3: str,
-        predict_s3: str,
-        output_s3: str,
+        train_s3_prefix: str,
+        predict_s3_prefix: str,
+        output_s3_prefix: str,
     ):
-        payload = {
-            "job_id": job_id,
-            "train_s3": train_s3,
-            "predict_s3": predict_s3,
-            "output_s3": output_s3,
-        }
+        """
+        Launches a Batch Transform job.
 
-        # 1. Upload request JSON to S3
-        request_key = "inference/request.json"
+        Expected S3 layout BEFORE job:
+          train_s3_prefix/train.csv
+          predict_s3_prefix/predict.csv
 
-        upload_raw_csv(
-            job_id=job_id,
-            content=json.dumps(payload).encode(),
-            filename=request_key,
+        Output AFTER job:
+          output_s3_prefix/predictions.csv
+        """
+
+        transform_job_name = f"{job_id}-transform"
+
+        self.sm.create_transform_job(
+            TransformJobName=transform_job_name,
+            ModelName=settings.sagemaker_model_name,
+            MaxConcurrentTransforms=1,
+            MaxPayloadInMB=10,
+            BatchStrategy="SingleRecord",
+            TransformInput={
+                "DataSource": {
+                    "S3DataSource": {
+                        "S3DataType": "S3Prefix",
+                        "S3Uri": predict_s3_prefix,
+                    }
+                },
+                "ContentType": "text/csv",
+                "SplitType": "None",
+            },
+            TransformOutput={
+                "S3OutputPath": output_s3_prefix,
+                "AssembleWith": "None",
+            },
+            TransformResources={
+                "InstanceType": "ml.c4.8xlarge",
+                "InstanceCount": 1,
+            },
+            Environment={
+                # Tell container where train data lives
+                "TRAIN_S3_PREFIX": train_s3_prefix,
+            },
         )
 
-        # 2. Invoke async endpoint with S3 URI
-        input_location = (
-            f"s3://{settings.s3_bucket}/jobs/{job_id}/{request_key}"
-        )
+        return transform_job_name
 
-        response = self.client.invoke_endpoint_async(
-            EndpointName=self.endpoint_name,
-            ContentType="application/json",
-            InputLocation=input_location,
-        )
+    def wait_for_transform(self, transform_job_name: str, timeout: int = 1800):
+        """
+        Polls SageMaker until the transform job completes or fails.
+        """
+        start = time.time()
 
-        return response
+        while True:
+            resp = self.sm.describe_transform_job(
+                TransformJobName=transform_job_name
+            )
+            status = resp["TransformJobStatus"]
+
+            if status == "Completed":
+                return
+
+            if status == "Failed":
+                reason = resp.get("FailureReason", "Unknown")
+                raise RuntimeError(
+                    f"Batch Transform failed: {reason}"
+                )
+
+            if time.time() - start > timeout:
+                raise TimeoutError("Batch Transform timed out")
+
+            time.sleep(10)

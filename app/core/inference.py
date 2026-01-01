@@ -1,110 +1,71 @@
-import json
-import csv
-from pathlib import Path
-from typing import List, Dict
-
-import boto3
+import os
+import pandas as pd
+from sklearn.linear_model import LinearRegression
 
 
-# ============================================================
-# Configuration
-# ============================================================
+# --------------------------------------------------
+# SageMaker Batch Transform paths (fixed)
+# --------------------------------------------------
+BASE_INPUT = "/opt/ml/input/data"
+TRAIN_PATH = os.path.join(BASE_INPUT, "train", "train.csv")
+PREDICT_PATH = os.path.join(BASE_INPUT, "predict", "predict.csv")
 
-SAGEMAKER_ENDPOINT_NAME = "gaia-magnetics-endpoint"
-AWS_REGION = "us-east-1"
-
-
-# ============================================================
-# SageMaker client
-# ============================================================
-
-_runtime = boto3.client(
-    "sagemaker-runtime",
-    region_name=AWS_REGION,
-)
+OUTPUT_DIR = "/opt/ml/output"
+OUTPUT_PATH = os.path.join(OUTPUT_DIR, "predictions.csv")
 
 
-# ============================================================
-# Inference runner
-# ============================================================
+def main():
+    # ----------------------------
+    # Load input CSVs
+    # ----------------------------
+    if not os.path.exists(TRAIN_PATH):
+        raise RuntimeError(f"Missing train.csv at {TRAIN_PATH}")
 
-def run_sagemaker_inference(
-    train_csv: Path,
-    predict_csv: Path,
-) -> List[Dict]:
-    """
-    Calls a SageMaker endpoint to infer magnetic values.
+    if not os.path.exists(PREDICT_PATH):
+        raise RuntimeError(f"Missing predict.csv at {PREDICT_PATH}")
 
-    Expected behavior:
-    - Model learns magnetic_value vs distance_along from train
-    - Model predicts magnetic_value for predict distances
-    - Returned rows must include distance_along and magnetic_value
+    train_df = pd.read_csv(TRAIN_PATH)
+    predict_df = pd.read_csv(PREDICT_PATH)
 
-    Returns:
-    - List of predicted rows
-    """
+    if train_df.empty:
+        raise RuntimeError("train.csv is empty")
+
+    if predict_df.empty:
+        raise RuntimeError("predict.csv is empty")
 
     # ----------------------------
-    # Load train data
+    # Validate required columns
     # ----------------------------
-    train_rows = _read_csv(train_csv)
-    predict_rows = _read_csv(predict_csv)
+    if "distance_along" not in train_df.columns:
+        raise RuntimeError("train.csv missing distance_along column")
 
-    if not predict_rows:
-        return []
+    if "magnetic_value" not in train_df.columns:
+        raise RuntimeError("train.csv missing magnetic_value column")
 
-    # ----------------------------
-    # Prepare payload
-    # ----------------------------
-    payload = {
-        "train": [
-            {
-                "distance_along": float(r["distance_along"]),
-                "value": float(r["magnetic_value"]),
-            }
-            for r in train_rows
-        ],
-        "predict": [
-            {
-                "distance_along": float(r["distance_along"]),
-            }
-            for r in predict_rows
-        ],
-    }
+    if "distance_along" not in predict_df.columns:
+        raise RuntimeError("predict.csv missing distance_along column")
 
     # ----------------------------
-    # Invoke endpoint
+    # Fit job-local model
     # ----------------------------
-    response = _runtime.invoke_endpoint(
-        EndpointName=SAGEMAKER_ENDPOINT_NAME,
-        ContentType="application/json",
-        Body=json.dumps(payload),
-    )
+    X_train = train_df[["distance_along"]]
+    y_train = train_df["magnetic_value"]
+
+    model = LinearRegression()
+    model.fit(X_train, y_train)
 
     # ----------------------------
-    # Parse response
+    # Predict
     # ----------------------------
-    body = response["Body"].read().decode("utf-8")
-    result = json.loads(body)
+    X_pred = predict_df[["distance_along"]]
+    predict_df["magnetic_value"] = model.predict(X_pred)
 
-    if "predictions" not in result:
-        raise RuntimeError("Invalid response from SageMaker endpoint")
-
-    predictions = []
-    for item in result["predictions"]:
-        predictions.append({
-            "distance_along": float(item["distance_along"]),
-            "magnetic_value": float(item["magnetic_value"]),
-        })
-
-    return predictions
+    # ----------------------------
+    # Write predictions
+    # ----------------------------
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    predict_df.to_csv(OUTPUT_PATH, index=False)
 
 
-# ============================================================
-# Internal helpers
-# ============================================================
-
-def _read_csv(path: Path) -> List[Dict]:
-    with open(path, newline="") as f:
-        reader = csv.DictReader(f)
-        return list(reader)
+if __name__ == "__main__":
+    main()

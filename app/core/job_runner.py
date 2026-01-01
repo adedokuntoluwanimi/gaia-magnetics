@@ -1,23 +1,21 @@
 from pathlib import Path
+import csv
 
 from fastapi import UploadFile
 
 from app.core.s3_io import S3IO
 from app.core.sagemaker_client import SageMakerBatchClient
 from app.core.merge import merge_job_results
-from app.core.csv_splitter import (
-    split_explicit_geometry,
-    split_sparse_geometry,
-)
-from app.schemas.job import JobCreateRequest, Scenario
+from app.core.csv_splitter import split_train_predict
+from app.schemas.job import JobCreateRequest
 
 
 class JobRunner:
     """
     Orchestrates a single GAIA Magnetics job.
 
-    Phase 1: prepare (upload + geometry + split)
-    Phase 2: run (batch transform + merge)
+    Stage 1–2: prepare (save, split, upload)
+    Stage 3–6: batch transform + merge
     """
 
     def __init__(self):
@@ -25,7 +23,7 @@ class JobRunner:
         self.sm = SageMakerBatchClient()
 
     # --------------------------------------------------
-    # Stage 1–2: preprocessing and upload
+    # Stage 1–2
     # --------------------------------------------------
     async def prepare(
         self,
@@ -40,37 +38,29 @@ class JobRunner:
         input_dir.mkdir(parents=True, exist_ok=True)
         geometry_dir.mkdir(parents=True, exist_ok=True)
 
-        # Save uploaded CSV locally
+        # Save uploaded CSV
         uploaded_path = input_dir / "uploaded.csv"
         content = await csv_file.read()
         uploaded_path.write_bytes(content)
 
-        # Geometry + split
-        if request.scenario == Scenario.explicit:
-            geometry_rows, train_rows, predict_rows = (
-                split_explicit_geometry(
-                    uploaded_path,
-                    x_col=request.x_column,
-                    y_col=request.y_column,
-                    value_col=request.value_column,
-                )
-            )
-        else:
-            geometry_rows, train_rows, predict_rows = (
-                split_sparse_geometry(
-                    uploaded_path,
-                    x_col=request.x_column,
-                    y_col=request.y_column,
-                    value_col=request.value_column,
-                    station_spacing=request.station_spacing,
-                )
-            )
+        # Read rows
+        with open(uploaded_path, newline="") as f:
+            rows = list(csv.DictReader(f))
 
-        # Write geometry CSV
+        if not rows:
+            raise RuntimeError("Uploaded CSV is empty")
+
+        # Split train / predict
+        train_rows, predict_rows = split_train_predict(
+            rows,
+            value_col=request.value_column,
+        )
+
+        # Persist geometry (full rows)
         geometry_path = geometry_dir / "geometry.csv"
-        self._write_csv(geometry_path, geometry_rows)
+        self._write_csv(geometry_path, rows)
 
-        # Write train / predict CSVs
+        # Persist train / predict
         train_path = input_dir / "train" / "train.csv"
         predict_path = input_dir / "predict" / "predict.csv"
 
@@ -93,7 +83,7 @@ class JobRunner:
         )
 
     # --------------------------------------------------
-    # Stage 3–6: batch transform + merge
+    # Stage 3–6
     # --------------------------------------------------
     def run(self, job_id: str) -> None:
         input_prefix = f"s3://{self.s3.bucket}/jobs/{job_id}/input/"
@@ -130,8 +120,6 @@ class JobRunner:
         csv_files[0].replace(final_path)
 
     def _write_csv(self, path: Path, rows: list[dict]) -> None:
-        import csv
-
         with open(path, "w", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=rows[0].keys())
             writer.writeheader()

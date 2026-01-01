@@ -1,3 +1,4 @@
+print("CONFIG LOADED FROM:", __file__)
 from pydantic import BaseSettings
 
 
@@ -13,4 +14,4 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
-print("CONFIG LOADED FROM:", __file__)
+

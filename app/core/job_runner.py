@@ -6,7 +6,6 @@ from app.core.s3_io import S3IO
 from app.core.sagemaker_client import SageMakerBatchClient
 from app.core.merge import merge_job_results
 from app.core.csv_splitter import (
-    read_csv,
     split_explicit_geometry,
     split_sparse_geometry,
 )
@@ -46,23 +45,23 @@ class JobRunner:
         content = await csv_file.read()
         uploaded_path.write_bytes(content)
 
-        # Read CSV
-        rows = read_csv(
-            uploaded_path,
-            x_col=request.x_column,
-            y_col=request.y_column,
-            value_col=request.value_column,
-        )
-
         # Geometry + split
         if request.scenario == Scenario.explicit:
             geometry_rows, train_rows, predict_rows = (
-                split_explicit_geometry(rows)
+                split_explicit_geometry(
+                    uploaded_path,
+                    x_col=request.x_column,
+                    y_col=request.y_column,
+                    value_col=request.value_column,
+                )
             )
         else:
             geometry_rows, train_rows, predict_rows = (
                 split_sparse_geometry(
-                    rows,
+                    uploaded_path,
+                    x_col=request.x_column,
+                    y_col=request.y_column,
+                    value_col=request.value_column,
                     station_spacing=request.station_spacing,
                 )
             )
@@ -71,7 +70,7 @@ class JobRunner:
         geometry_path = geometry_dir / "geometry.csv"
         self._write_csv(geometry_path, geometry_rows)
 
-        # Write train / predict
+        # Write train / predict CSVs
         train_path = input_dir / "train" / "train.csv"
         predict_path = input_dir / "predict" / "predict.csv"
 

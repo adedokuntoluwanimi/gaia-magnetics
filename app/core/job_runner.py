@@ -23,7 +23,7 @@ class JobRunner:
         self.sm = SageMakerBatchClient()
 
     # --------------------------------------------------
-    # Stage 1–2
+    # Stage 1–2: preprocessing and upload
     # --------------------------------------------------
     async def prepare(
         self,
@@ -38,29 +38,42 @@ class JobRunner:
         input_dir.mkdir(parents=True, exist_ok=True)
         geometry_dir.mkdir(parents=True, exist_ok=True)
 
-        # Save uploaded CSV
+        # Save uploaded CSV locally
         uploaded_path = input_dir / "uploaded.csv"
         content = await csv_file.read()
         uploaded_path.write_bytes(content)
 
-        # Read rows
+        # Read CSV rows
         with open(uploaded_path, newline="") as f:
             rows = list(csv.DictReader(f))
 
         if not rows:
             raise RuntimeError("Uploaded CSV is empty")
 
-        # Split train / predict
+        # Split into train / predict
         train_rows, predict_rows = split_train_predict(
             rows,
             value_col=request.value_column,
         )
 
-        # Persist geometry (full rows)
+        # Guard rails (critical)
+        if not train_rows:
+            raise RuntimeError(
+                "No training rows found. "
+                "Measured rows must have is_measured=True and valid values."
+            )
+
+        if not predict_rows:
+            raise RuntimeError(
+                "No prediction rows found. "
+                "Unmeasured rows must have is_measured=False and empty values."
+            )
+
+        # Persist geometry (all rows)
         geometry_path = geometry_dir / "geometry.csv"
         self._write_csv(geometry_path, rows)
 
-        # Persist train / predict
+        # Persist train / predict CSVs
         train_path = input_dir / "train" / "train.csv"
         predict_path = input_dir / "predict" / "predict.csv"
 
@@ -83,7 +96,7 @@ class JobRunner:
         )
 
     # --------------------------------------------------
-    # Stage 3–6
+    # Stage 3–6: batch transform + merge
     # --------------------------------------------------
     def run(self, job_id: str) -> None:
         input_prefix = f"s3://{self.s3.bucket}/jobs/{job_id}/input/"

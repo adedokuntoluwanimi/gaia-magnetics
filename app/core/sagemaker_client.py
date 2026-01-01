@@ -36,6 +36,9 @@ class SageMakerClient:
         transform_job_name = f"{job_id}-transform"
 
         print("SETTINGS DIR:", dir(settings))
+        print("SETTINGS TYPE:", type(settings))
+        print("SETTINGS DIR:", dir(settings))
+
 
 
         self.sm.create_transform_job(

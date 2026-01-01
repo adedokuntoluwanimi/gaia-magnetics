@@ -1,225 +1,109 @@
-from pathlib import Path
+# app/core/job_runner.py
+
 import csv
-from typing import Any, List, Dict
+from typing import List, Dict
 
-from fastapi import UploadFile
-
-from app.schemas.job import JobCreateRequest
-from app.core.s3_io import S3IO
-from app.core.sagemaker_client import SageMakerBatchClient
-from app.core.csv_splitter import split_train_predict
+from app.schemas.job import JobCreateRequest, JobStatus
 from app.core.geometry import (
-    compute_distance_along,
+    compute_distance_along_traverse,
     generate_sparse_geometry,
 )
-from app.core.merge import merge_job_results
+from app.core.csv_splitter import split_train_predict
+from app.core.s3_io import upload_raw_csv
+from app.core.job_store import (
+    create_job_record,
+    update_job_status,
+)
 
 
-# ==================================================
-# Input normalization (Stage 1 boundary)
-# ==================================================
-def normalize_is_measured(value: Any) -> bool:
-    if value is None:
-        raise ValueError("is_measured is missing")
-
-    if isinstance(value, bool):
-        return value
-
-    v = str(value).strip().lower()
-
-    if v in {"true", "1", "yes"}:
-        return True
-    if v in {"false", "0", "no"}:
-        return False
-
-    raise ValueError(f"Invalid is_measured value: {value}")
-
-
-# ==================================================
-# JobRunner
-# ==================================================
 class JobRunner:
     """
-    Orchestrates a single GAIA Magnetics job.
-
-    Stage order:
-    1. CSV ingestion + normalization
-    2. Geometry (explicit or sparse)
-    3. Train / predict split
-    4. Upload to S3
-    5. Batch Transform
-    6. Merge
+    Executes a GAIA job as a strict linear pipeline.
     """
 
-    def __init__(self):
-        self.s3 = S3IO()
-        self.sm = SageMakerBatchClient()
+    def __init__(self, job_id: str):
+        self.job_id = job_id
 
-    # ==================================================
-    # Stage 1–4: Prepare job
-    # ==================================================
-    async def prepare(
-        self,
-        job_id: str,
-        csv_file: UploadFile,
-        request: JobCreateRequest,
-    ) -> None:
+    async def run(self, csv_file, request: JobCreateRequest):
+        # --------------------------------------------------
+        # 0. Create job record FIRST
+        # --------------------------------------------------
+        create_job_record(self.job_id)
+        update_job_status(self.job_id, JobStatus.running)
 
-        # -------------------------------
-        # Local directory contract
-        # -------------------------------
-        base = Path("data") / job_id
-        geometry_dir = base / "geometry"
-        input_dir = base / "input"
-        train_dir = input_dir / "train"
-        predict_dir = input_dir / "predict"
+        try:
+            raw = await csv_file.read()
+            upload_raw_csv(self.job_id, raw, "uploaded.csv")
 
-        geometry_dir.mkdir(parents=True, exist_ok=True)
-        train_dir.mkdir(parents=True, exist_ok=True)
-        predict_dir.mkdir(parents=True, exist_ok=True)
+            rows = self._parse_csv(raw)
 
-        # -------------------------------
-        # Save uploaded CSV
-        # -------------------------------
-        uploaded_path = input_dir / "uploaded.csv"
-        uploaded_path.write_bytes(await csv_file.read())
+            # --------------------------------------------------
+            # 1. Distance computation (always)
+            # --------------------------------------------------
+            rows = compute_distance_along_traverse(
+                rows,
+                x_col=request.x_column,
+                y_col=request.y_column,
+            )
 
-        # -------------------------------
-        # Read + normalize rows
-        # -------------------------------
-        rows: List[Dict] = []
-
-        with open(uploaded_path, newline="") as f:
-            reader = csv.DictReader(f)
-
-            for row in reader:
-                try:
-                    row["is_measured"] = normalize_is_measured(
-                        row.get("is_measured")
-                    )
-                except ValueError as e:
-                    raise RuntimeError(f"CSV validation error: {e}")
-
-                rows.append(row)
-
-        if not rows:
-            raise RuntimeError("Uploaded CSV is empty")
-
-        # -------------------------------
-        # Geometry (always computed)
-        # -------------------------------
-        rows = compute_distance_along(
-            rows,
-            x_col=request.x_column,
-            y_col=request.y_column,
-        )
-
-        # -------------------------------
-        # Sparse geometry (optional)
-        # -------------------------------
-        if request.scenario == "sparse":
-            measured_rows = [r for r in rows if r["is_measured"]]
-
-            if len(measured_rows) < 2:
-                raise RuntimeError(
-                    "Sparse geometry requires at least two measured points"
+            # --------------------------------------------------
+            # 2. Geometry
+            # --------------------------------------------------
+            if request.scenario == "sparse":
+                rows = generate_sparse_geometry(
+                    rows,
+                    x_col=request.x_column,
+                    y_col=request.y_column,
+                    value_col=request.value_column,
+                    spacing=request.station_spacing,
                 )
+            else:
+                # explicit geometry
+                for r in rows:
+                    r["is_measured"] = r.get(request.value_column, "") not in ("", None)
 
-            rows = generate_sparse_geometry(
-                measured_rows,
-                spacing=request.spacing,
+            # --------------------------------------------------
+            # 3. Split train / predict
+            # --------------------------------------------------
+            train, predict = split_train_predict(
+                rows,
                 value_col=request.value_column,
             )
 
-        # -------------------------------
-        # Freeze geometry
-        # -------------------------------
-        geometry_path = geometry_dir / "geometry.csv"
-        self._write_csv(geometry_path, rows)
+            if not train:
+                raise ValueError("No measured rows for training")
 
-        # -------------------------------
-        # Split train / predict
-        # -------------------------------
-        train_rows, predict_rows = split_train_predict(
-            rows,
-            value_col=request.value_column,
-        )
+            if not predict:
+                raise ValueError("No rows to predict")
 
-        if not train_rows:
-            raise RuntimeError(
-                "No training rows found. "
-                "Measured rows must have values."
-            )
+            # --------------------------------------------------
+            # 4. Upload authoritative CSVs
+            # --------------------------------------------------
+            self._upload_csv("train.csv", train)
+            self._upload_csv("predict.csv", predict)
 
-        if not predict_rows:
-            raise RuntimeError(
-                "No prediction rows found. "
-                "Unmeasured rows must have empty values."
-            )
+            update_job_status(self.job_id, JobStatus.completed)
 
-        # -------------------------------
-        # Write train / predict locally
-        # -------------------------------
-        train_path = train_dir / "train.csv"
-        predict_path = predict_dir / "predict.csv"
+        except Exception:
+            update_job_status(self.job_id, JobStatus.failed)
+            raise
 
-        self._write_csv(train_path, train_rows)
-        self._write_csv(predict_path, predict_rows)
-
-        # -------------------------------
-        # Upload to S3 (authoritative)
-        # -------------------------------
-        self.s3.upload_raw_csv(
-            job_id,
-            train_path.read_bytes(),
-            "train/train.csv",
-        )
-
-        self.s3.upload_raw_csv(
-            job_id,
-            predict_path.read_bytes(),
-            "predict/predict.csv",
-        )
-
-    # ==================================================
-    # Stage 5–6: Batch Transform + merge
-    # ==================================================
-    def run(self, job_id: str) -> None:
-        input_prefix = f"s3://{self.s3.bucket}/jobs/{job_id}/input/"
-        output_prefix = f"s3://{self.s3.bucket}/jobs/{job_id}/raw-output/"
-
-        # Batch Transform (blocking)
-        self.sm.run_batch_transform(
-            job_id=job_id,
-            input_s3_prefix=input_prefix,
-            output_s3_prefix=output_prefix,
-        )
-
-        # Download + merge
-        self._normalize_predictions(job_id)
-        merge_job_results(job_id)
-
-    # ==================================================
+    # --------------------------------------------------
     # Helpers
-    # ==================================================
-    def _normalize_predictions(self, job_id: str) -> None:
-        local_dir = Path("data") / job_id / "inference"
-        local_dir.mkdir(parents=True, exist_ok=True)
+    # --------------------------------------------------
 
-        self.s3.download_prefix(
-            f"jobs/{job_id}/raw-output/",
-            local_dir,
+    def _parse_csv(self, raw: bytes) -> List[Dict]:
+        text = raw.decode("utf-8").splitlines()
+        return list(csv.DictReader(text))
+
+    def _upload_csv(self, name: str, rows: List[Dict]):
+        headers = rows[0].keys()
+        lines = [",".join(headers)]
+        for r in rows:
+            lines.append(",".join(str(r.get(h, "")) for h in headers))
+
+        upload_raw_csv(
+            job_id=self.job_id,
+            content="\n".join(lines).encode(),
+            filename=name,
         )
-
-        csv_files = list(local_dir.glob("*.csv"))
-        if not csv_files:
-            raise RuntimeError("No predictions returned from Batch Transform")
-
-        final_path = local_dir / "predictions.csv"
-        csv_files[0].replace(final_path)
-
-    def _write_csv(self, path: Path, rows: List[Dict]) -> None:
-        with open(path, "w", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=rows[0].keys())
-            writer.writeheader()
-            writer.writerows(rows)

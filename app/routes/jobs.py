@@ -9,46 +9,57 @@ from fastapi import (
     HTTPException,
 )
 
+from app.core.job_store import get_job_record
 from app.core.job_runner import JobRunner
-from app.schemas.job import JobCreateRequest, JobResponse
+from app.schemas.job import JobCreateRequest, Scenario
 
 
-router = APIRouter()
-runner = JobRunner()
+router = APIRouter(prefix="/jobs", tags=["jobs"])
 
 
-@router.post("", response_model=JobResponse)
+@router.post("")
 async def create_job(
-    file: UploadFile = File(...),
+    csv_file: UploadFile = File(...),
 
-    scenario: str = Form(...),
+    # scenario selection
+    scenario: Scenario = Form(...),
+
+    # column mappings
     x_column: str = Form(...),
     y_column: str = Form(...),
     value_column: str = Form(...),
-    spacing: Optional[float] = Form(None),
+
+    # required only for sparse
+    station_spacing: Optional[float] = Form(None),
 ):
-    """
-    Creates and executes a GAIA Magnetics job synchronously.
-    """
+    if not csv_file.filename.endswith(".csv"):
+        raise HTTPException(status_code=400, detail="Only CSV files are allowed")
 
-    job_id = uuid.uuid4().hex
-
-    try:
-        request = JobCreateRequest(
-            scenario=scenario,
-            x_column=x_column,
-            y_column=y_column,
-            value_column=value_column,
-            spacing=spacing,
-        )
-
-        await runner.prepare(job_id, file, request)
-        runner.run(job_id)
-
-        return JobResponse(job_id=job_id)
-
-    except Exception as e:
+    if scenario == Scenario.sparse and station_spacing is None:
         raise HTTPException(
             status_code=400,
-            detail=str(e),
+            detail="station_spacing is required for sparse geometry",
         )
+
+    job_id = f"gaia-{uuid.uuid4().hex}"
+
+    request = JobCreateRequest(
+        scenario=scenario,
+        x_column=x_column,
+        y_column=y_column,
+        value_column=value_column,
+        station_spacing=station_spacing,
+    )
+
+    runner = JobRunner(job_id)
+    await runner.run(csv_file, request)
+
+    return {
+        "job_id": job_id,
+        "status": "running",
+    }
+
+
+@router.get("/{job_id}/status")
+def job_status(job_id: str):
+    return get_job_record(job_id)

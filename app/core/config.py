@@ -1,13 +1,11 @@
+import os
 from pydantic import BaseSettings
 
 
 class Settings(BaseSettings):
-    # AWS
-    aws_region: str = "us-east-1"
-    s3_bucket: str = "gaia-magnetics"
+    s3_bucket = "gaia-magnetics"
+    aws_region = "us-east-1"
 
-    # SageMaker
-    sagemaker_model_name: str = "gaia-magnetics-model"
 
     class Config:
         env_prefix = "GAIA_"

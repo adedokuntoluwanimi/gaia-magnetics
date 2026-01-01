@@ -1,107 +1,58 @@
-from pathlib import Path
-import csv
-from typing import Dict, List
+from typing import List, Dict
 
 
-# ==================================================
-# Low-level helpers
-# ==================================================
-def _read_csv(path: Path) -> List[Dict]:
-    with open(path, newline="") as f:
-        return list(csv.DictReader(f))
-
-
-def _write_csv(path: Path, rows: List[Dict]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=rows[0].keys())
-        writer.writeheader()
-        writer.writerows(rows)
-
-
-# ==================================================
-# Core merge logic
-# ==================================================
-def merge_job_results(job_id: str) -> None:
+def merge_measured_and_predicted(
+    train_rows: List[Dict],
+    predicted_rows: List[Dict],
+    value_col: str = "magnetic_value",
+) -> List[Dict]:
     """
-    Stage 6:
-    - Reads frozen geometry
-    - Reads predictions
-    - Merges predicted values into unmeasured rows
-    - Writes full traverse to output/final.csv
+    Merge measured and predicted rows into a final ordered dataset.
+
+    Rules:
+    - Measured rows are preserved exactly
+    - Predicted rows are appended without overwriting
+    - A 'source' field identifies row origin
+    - Output is sorted strictly by distance_along
     """
 
-    base = Path("data") / job_id
+    merged = []
 
-    geometry_path = base / "geometry" / "geometry.csv"
-    predictions_path = base / "inference" / "predictions.csv"
-    output_path = base / "output" / "final.csv"
+    # ----------------------------
+    # Measured rows
+    # ----------------------------
+    for row in train_rows:
+        if "distance_along" not in row:
+            raise ValueError("Measured row missing distance_along")
 
-    if not geometry_path.exists():
-        raise FileNotFoundError(f"Missing geometry file: {geometry_path}")
+        if value_col not in row:
+            raise ValueError("Measured row missing magnetic value")
 
-    if not predictions_path.exists():
-        raise FileNotFoundError(
-            f"Missing predictions file: {predictions_path}"
-        )
+        merged.append({
+            "distance_along": float(row["distance_along"]),
+            "magnetic_value": float(row[value_col]),
+            "source": "measured",
+        })
 
-    geometry_rows = _read_csv(geometry_path)
-    predictions_rows = _read_csv(predictions_path)
+    # ----------------------------
+    # Predicted rows
+    # ----------------------------
+    for row in predicted_rows:
+        if "distance_along" not in row:
+            raise ValueError("Predicted row missing distance_along")
 
-    if not geometry_rows:
-        raise RuntimeError("Geometry CSV is empty")
+        if value_col not in row:
+            raise ValueError("Predicted row missing magnetic value")
 
-    if not predictions_rows:
-        raise RuntimeError("Predictions CSV is empty")
+        merged.append({
+            "distance_along": float(row["distance_along"]),
+            "magnetic_value": float(row[value_col]),
+            "source": "predicted",
+        })
 
-    # --------------------------------------------------
-    # Validate prediction schema
-    # --------------------------------------------------
-    for col in ("distance_along", "predicted_value"):
-        if col not in predictions_rows[0]:
-            raise RuntimeError(
-                f"predictions.csv missing required column '{col}'"
-            )
+    # ----------------------------
+    # Sort
+    # ----------------------------
+    merged.sort(key=lambda r: r["distance_along"])
 
-    # --------------------------------------------------
-    # Determine value column from geometry
-    # --------------------------------------------------
-    value_cols = [
-        c for c in geometry_rows[0].keys()
-        if c not in ("distance_along", "is_measured")
-    ]
-
-    if len(value_cols) != 1:
-        raise RuntimeError(
-            f"Expected exactly one value column in geometry, found {value_cols}"
-        )
-
-    value_col = value_cols[0]
-
-    # --------------------------------------------------
-    # Build prediction lookup
-    # --------------------------------------------------
-    pred_map = {
-        float(r["distance_along"]): r["predicted_value"]
-        for r in predictions_rows
-    }
-
-    # --------------------------------------------------
-    # Merge
-    # --------------------------------------------------
-    merged: List[Dict] = []
-
-    for r in geometry_rows:
-        row = dict(r)
-        d = float(row["distance_along"])
-
-        if not row["is_measured"]:
-            if d not in pred_map:
-                raise RuntimeError(
-                    f"Missing prediction for distance_along={d}"
-                )
-            row[value_col] = pred_map[d]
-
-        merged.append(row)
-
-    _write_csv(output_path, merged)
+    return merged

@@ -1,76 +1,38 @@
-import time
+# app/core/sagemaker_client.py
+
+import json
 import boto3
 from app.core.config import settings
 
 
-class SageMakerBatchClient:
-    """
-    Thin wrapper around SageMaker Batch Transform.
-    """
-
+class SageMakerClient:
     def __init__(self):
-        self.sm = boto3.client(
-            "sagemaker",
+        self.client = boto3.client(
+            "sagemaker-runtime",
             region_name=settings.aws_region,
         )
 
-    def run_batch_transform(
+        # name of your deployed async endpoint
+        self.endpoint_name = settings.sagemaker_endpoint_name
+
+    def invoke_async(
         self,
-        *,
         job_id: str,
-        input_s3_prefix: str,
-        output_s3_prefix: str,
-    ) -> None:
-        """
-        Launches a Batch Transform job and blocks until completion.
-        """
+        train_s3: str,
+        predict_s3: str,
+        output_s3: str,
+    ):
+        payload = {
+            "job_id": job_id,
+            "train_s3": train_s3,
+            "predict_s3": predict_s3,
+            "output_s3": output_s3,
+        }
 
-        transform_job_name = f"gaia-batch-{job_id}-{int(time.time())}"
-
-        self.sm.create_transform_job(
-            TransformJobName=transform_job_name,
-            ModelName=settings.sagemaker_model_name,
-            TransformInput={
-                "DataSource": {
-                    "S3DataSource": {
-                        "S3DataType": "S3Prefix",
-                        "S3Uri": input_s3_prefix,
-                    }
-                },
-                "ContentType": "text/csv",
-                "SplitType": "None",
-            },
-            TransformOutput={
-                "S3OutputPath": output_s3_prefix,
-                "Accept": "text/csv",
-            },
-            TransformResources={
-                "InstanceType": "ml.c4.xlarge",
-                "InstanceCount": 1,
-            },
+        response = self.client.invoke_endpoint_async(
+            EndpointName=self.endpoint_name,
+            ContentType="application/json",
+            InputLocation=json.dumps(payload),
         )
 
-        self._wait_for_completion(transform_job_name)
-
-    def _wait_for_completion(self, transform_job_name: str) -> None:
-        """
-        Polls SageMaker until the transform job finishes.
-        """
-
-        while True:
-            response = self.sm.describe_transform_job(
-                TransformJobName=transform_job_name
-            )
-
-            status = response["TransformJobStatus"]
-
-            if status == "Completed":
-                return
-
-            if status in ("Failed", "Stopped"):
-                reason = response.get("FailureReason", "unknown")
-                raise RuntimeError(
-                    f"Batch transform failed: {status} | {reason}"
-                )
-
-            time.sleep(10)
+        return response

@@ -1,12 +1,15 @@
 FROM python:3.9-slim
 
 # --------------------------------------------------
-# Working directory expected by SageMaker
+# System setup
 # --------------------------------------------------
-WORKDIR /opt/app
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+WORKDIR /app
 
 # --------------------------------------------------
-# Install dependencies
+# Install Python dependencies
 # --------------------------------------------------
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
@@ -17,11 +20,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY inference.py .
 
 # --------------------------------------------------
-# Disable buffering for clean logs
-# --------------------------------------------------
-ENV PYTHONUNBUFFERED=1
-
-# --------------------------------------------------
-# Entry point for Batch Transform
+# SageMaker Batch Transform entrypoint
 # --------------------------------------------------
 ENTRYPOINT ["python", "inference.py"]

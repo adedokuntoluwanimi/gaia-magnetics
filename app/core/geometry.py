@@ -1,91 +1,94 @@
-# app/core/geometry.py
-
 from math import hypot
 from typing import List, Dict
 
 
-def compute_distance_along_traverse(
+# ==================================================
+# Explicit geometry
+# ==================================================
+def compute_distance_along(
     rows: List[Dict],
+    *,
     x_col: str,
     y_col: str,
 ) -> List[Dict]:
     """
-    Computes cumulative distance along traverse.
-    Adds `d_along` to every row.
+    Computes cumulative distance_along for a traverse.
+
+    Rules:
+    - Uses row order as traverse order
+    - First row has distance_along = 0
+    - distance_along is always recomputed
     """
-    d = 0.0
-    prev = None
+
+    distance = 0.0
+    prev_x = None
+    prev_y = None
 
     for r in rows:
         x = float(r[x_col])
         y = float(r[y_col])
 
-        if prev is not None:
-            d += hypot(x - prev[0], y - prev[1])
+        if prev_x is not None:
+            distance += hypot(x - prev_x, y - prev_y)
 
-        r["d_along"] = d
-        prev = (x, y)
+        r["distance_along"] = distance
+
+        prev_x = x
+        prev_y = y
 
     return rows
 
 
+# ==================================================
+# Sparse geometry
+# ==================================================
 def generate_sparse_geometry(
     rows: List[Dict],
     *,
-    x_col: str,
-    y_col: str,
-    value_col: str,
     spacing: float,
+    value_col: str,
 ) -> List[Dict]:
     """
-    Inserts uniform-spacing geometry rows between measured stations.
+    Generates uniformly spaced unmeasured stations along a traverse.
 
-    Rules:
-    - Original rows are measured
-    - Inserted rows are unmeasured
-    - Boundary stations remain measured
+    Assumptions:
+    - rows already contain distance_along
+    - rows are measured points only
+    - rows are ordered by distance_along
     """
 
-    # Enforce ordering
-    rows = sorted(rows, key=lambda r: r["d_along"])
+    if spacing <= 0:
+        raise ValueError("spacing must be > 0")
 
-    # Mark originals
-    for r in rows:
-        r["is_measured"] = True
+    # Ensure ordering
+    rows = sorted(rows, key=lambda r: r["distance_along"])
 
     out: List[Dict] = []
 
-    for i in range(len(rows) - 1):
-        a = rows[i]
-        b = rows[i + 1]
+    max_d = rows[-1]["distance_along"]
+    d = 0.0
+    idx = 0
 
-        out.append(a)
+    while d <= max_d:
+        # Advance to surrounding measured points
+        while (
+            idx + 1 < len(rows)
+            and rows[idx + 1]["distance_along"] < d
+        ):
+            idx += 1
 
-        da = a["d_along"]
-        db = b["d_along"]
-        gap = db - da
-
-        if gap <= spacing:
-            continue
-
-        steps = int(gap // spacing)
-
-        for k in range(1, steps + 1):
-            d_new = da + k * spacing
-            if d_new >= db:
-                break
-
-            t = (d_new - da) / gap
-
+        # Exact measured station
+        if rows[idx]["distance_along"] == d:
+            out.append(rows[idx])
+        else:
             out.append(
                 {
-                    x_col: float(a[x_col]) + t * (float(b[x_col]) - float(a[x_col])),
-                    y_col: float(a[y_col]) + t * (float(b[y_col]) - float(a[y_col])),
-                    "d_along": d_new,
+                    "distance_along": d,
                     value_col: "",
                     "is_measured": False,
                 }
             )
 
-    out.append(rows[-1])
+        d += spacing
+
     return out

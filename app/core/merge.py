@@ -1,11 +1,11 @@
-import csv
 from pathlib import Path
+import csv
 from typing import Dict, List
 
 
-# --------------------------------------------------
+# ==================================================
 # Low-level helpers
-# --------------------------------------------------
+# ==================================================
 def _read_csv(path: Path) -> List[Dict]:
     with open(path, newline="") as f:
         return list(csv.DictReader(f))
@@ -19,48 +19,16 @@ def _write_csv(path: Path, rows: List[Dict]) -> None:
         writer.writerows(rows)
 
 
-# --------------------------------------------------
-# Core merge logic (unchanged conceptually)
-# --------------------------------------------------
-def _merge_predictions(
-    geometry_rows: List[Dict],
-    predictions_rows: List[Dict],
-    *,
-    value_col: str,
-    pred_col: str = "predicted_value",
-) -> List[Dict]:
-    pred_map = {
-        float(r["distance_along"]): r[pred_col]
-        for r in predictions_rows
-    }
-
-    merged: List[Dict] = []
-
-    for r in geometry_rows:
-        row = dict(r)
-        d = float(row["distance_along"])
-
-        if not row.get("is_measured", False):
-            if d not in pred_map:
-                raise ValueError(
-                    f"Missing prediction for distance_along={d}"
-                )
-            row[value_col] = pred_map[d]
-
-        merged.append(row)
-
-    return merged
-
-
-# --------------------------------------------------
-# Stage 6 entry point
-# --------------------------------------------------
+# ==================================================
+# Core merge logic
+# ==================================================
 def merge_job_results(job_id: str) -> None:
     """
     Stage 6:
-    - Reads geometry CSV
-    - Reads inference/predictions.csv
-    - Writes output/final.csv
+    - Reads frozen geometry
+    - Reads predictions
+    - Merges predicted values into unmeasured rows
+    - Writes full traverse to output/final.csv
     """
 
     base = Path("data") / job_id
@@ -86,17 +54,54 @@ def merge_job_results(job_id: str) -> None:
     if not predictions_rows:
         raise RuntimeError("Predictions CSV is empty")
 
-    # Value column is whatever already exists in geometry
-    # Assumed consistent across rows
-    value_col = next(
-        k for k in geometry_rows[0].keys()
-        if k not in ("distance_along", "is_measured")
-    )
+    # --------------------------------------------------
+    # Validate prediction schema
+    # --------------------------------------------------
+    for col in ("distance_along", "predicted_value"):
+        if col not in predictions_rows[0]:
+            raise RuntimeError(
+                f"predictions.csv missing required column '{col}'"
+            )
 
-    merged = _merge_predictions(
-        geometry_rows,
-        predictions_rows,
-        value_col=value_col,
-    )
+    # --------------------------------------------------
+    # Determine value column from geometry
+    # --------------------------------------------------
+    value_cols = [
+        c for c in geometry_rows[0].keys()
+        if c not in ("distance_along", "is_measured")
+    ]
+
+    if len(value_cols) != 1:
+        raise RuntimeError(
+            f"Expected exactly one value column in geometry, found {value_cols}"
+        )
+
+    value_col = value_cols[0]
+
+    # --------------------------------------------------
+    # Build prediction lookup
+    # --------------------------------------------------
+    pred_map = {
+        float(r["distance_along"]): r["predicted_value"]
+        for r in predictions_rows
+    }
+
+    # --------------------------------------------------
+    # Merge
+    # --------------------------------------------------
+    merged: List[Dict] = []
+
+    for r in geometry_rows:
+        row = dict(r)
+        d = float(row["distance_along"])
+
+        if not row["is_measured"]:
+            if d not in pred_map:
+                raise RuntimeError(
+                    f"Missing prediction for distance_along={d}"
+                )
+            row[value_col] = pred_map[d]
+
+        merged.append(row)
 
     _write_csv(output_path, merged)

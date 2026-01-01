@@ -4,6 +4,10 @@ from app.core.config import settings
 
 
 class SageMakerBatchClient:
+    """
+    Thin wrapper around SageMaker Batch Transform.
+    """
+
     def __init__(self):
         self.sm = boto3.client(
             "sagemaker",
@@ -18,10 +22,10 @@ class SageMakerBatchClient:
         output_s3_prefix: str,
     ) -> None:
         """
-        Launches a SageMaker Batch Transform job and blocks until completion.
+        Launches a Batch Transform job and blocks until completion.
         """
 
-        transform_job_name = f"gaia-batch-{job_id}"
+        transform_job_name = f"gaia-batch-{job_id}-{int(time.time())}"
 
         self.sm.create_transform_job(
             TransformJobName=transform_job_name,
@@ -52,10 +56,12 @@ class SageMakerBatchClient:
         """
         Polls SageMaker until the transform job finishes.
         """
+
         while True:
             response = self.sm.describe_transform_job(
                 TransformJobName=transform_job_name
             )
+
             status = response["TransformJobStatus"]
 
             if status == "Completed":

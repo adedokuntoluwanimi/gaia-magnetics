@@ -1,5 +1,4 @@
 import uuid
-from typing import Optional
 
 from fastapi import (
     APIRouter,
@@ -10,69 +9,45 @@ from fastapi import (
 )
 
 from app.core.job_runner import JobRunner
-from app.core.job_store import get_job_record
-from app.schemas.job import JobCreateRequest, Scenario
+from app.schemas.job import JobCreateRequest, JobResponse
 
 
-router = APIRouter(prefix="/jobs", tags=["jobs"])
+router = APIRouter()
+runner = JobRunner()
 
 
-@router.post("")
+@router.post("", response_model=JobResponse)
 async def create_job(
-    csv_file: UploadFile = File(...),
+    file: UploadFile = File(...),
 
-    # scenario selection
-    scenario: Scenario = Form(...),
-
-    # column mappings
+    scenario: str = Form(...),
     x_column: str = Form(...),
     y_column: str = Form(...),
     value_column: str = Form(...),
-
-    # required only for sparse geometry
-    station_spacing: Optional[float] = Form(None),
+    spacing: float | None = Form(None),
 ):
-    # --------------------------------------------------
-    # Basic validation
-    # --------------------------------------------------
-    if not csv_file.filename.endswith(".csv"):
-        raise HTTPException(
-            status_code=400,
-            detail="Only CSV files are allowed",
+    """
+    Creates and executes a GAIA Magnetics job synchronously.
+    """
+
+    job_id = uuid.uuid4().hex
+
+    try:
+        request = JobCreateRequest(
+            scenario=scenario,
+            x_column=x_column,
+            y_column=y_column,
+            value_column=value_column,
+            spacing=spacing,
         )
 
-    if scenario == Scenario.sparse and station_spacing is None:
+        await runner.prepare(job_id, file, request)
+        runner.run(job_id)
+
+        return JobResponse(job_id=job_id)
+
+    except Exception as e:
         raise HTTPException(
             status_code=400,
-            detail="station_spacing is required for sparse geometry",
+            detail=str(e),
         )
-
-    # --------------------------------------------------
-    # Job identity
-    # --------------------------------------------------
-    job_id = f"gaia-{uuid.uuid4().hex}"
-
-    request = JobCreateRequest(
-        scenario=scenario,
-        x_column=x_column,
-        y_column=y_column,
-        value_column=value_column,
-        station_spacing=station_spacing,
-    )
-
-    # --------------------------------------------------
-    # Orchestration
-    # --------------------------------------------------
-    runner = JobRunner()
-    await runner.prepare(job_id, csv_file, request)
-    runner.run(job_id)
-
-    return {
-        "job_id": job_id,
-        "status": "running",
-    }
-
-
-@router.get("/{job_id}/status")
-def job_status(job_id: str):
-    return get_job_record(job_id)

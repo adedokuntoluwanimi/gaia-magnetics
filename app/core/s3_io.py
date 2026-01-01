@@ -11,10 +11,20 @@ class S3IO:
             region_name=settings.aws_region,
         )
 
-    # --------------------------------------------------
-    # Existing functionality (unchanged)
-    # --------------------------------------------------
-    def upload_raw_csv(self, job_id: str, content: bytes, filename: str) -> str:
+    # ==================================================
+    # Upload inputs (authoritative layout)
+    # ==================================================
+    def upload_raw_csv(
+        self,
+        job_id: str,
+        content: bytes,
+        filename: str,
+    ) -> str:
+        """
+        Uploads a CSV to:
+        jobs/<job_id>/input/<filename>
+        """
+
         key = f"jobs/{job_id}/input/{filename}"
 
         self.s3.put_object(
@@ -26,31 +36,21 @@ class S3IO:
 
         return key
 
-    def download_csv(self, job_id: str, filename: str) -> bytes:
-        key = f"jobs/{job_id}/{filename}"
-        response = self.s3.get_object(
-            Bucket=self.bucket,
-            Key=key,
-        )
-        return response["Body"].read()
-
-    def object_exists(self, job_id: str, filename: str) -> bool:
-        try:
-            self.s3.head_object(
-                Bucket=self.bucket,
-                Key=f"jobs/{job_id}/{filename}",
-            )
-            return True
-        except Exception:
-            return False
-
-    # --------------------------------------------------
-    # New: required for Batch Transform output
-    # --------------------------------------------------
-    def download_prefix(self, prefix: str, local_dir: Path) -> None:
+    # ==================================================
+    # Download Batch Transform output
+    # ==================================================
+    def download_prefix(
+        self,
+        prefix: str,
+        local_dir: Path,
+    ) -> None:
         """
         Downloads all objects under an S3 prefix into a local directory.
         """
+
+        if not prefix.endswith("/"):
+            prefix = prefix + "/"
+
         paginator = self.s3.get_paginator("list_objects_v2")
 
         for page in paginator.paginate(

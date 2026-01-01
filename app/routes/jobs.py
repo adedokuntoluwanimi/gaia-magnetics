@@ -1,4 +1,5 @@
 import uuid
+from typing import Optional
 
 from fastapi import (
     APIRouter,
@@ -24,7 +25,7 @@ async def create_job(
     x_column: str = Form(...),
     y_column: str = Form(...),
     value_column: str = Form(...),
-    spacing: float | None = Form(None),
+    spacing: Optional[float] = Form(None),
 ):
     """
     Creates and executes a GAIA Magnetics job synchronously.

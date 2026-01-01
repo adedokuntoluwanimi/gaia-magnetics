@@ -21,6 +21,13 @@ let currentJobId = null;
 let pollInterval = null;
 
 /* =========================================================
+   BACKEND BASE URL
+   (Nginx will proxy /jobs later)
+========================================================= */
+
+const API_BASE = "";
+
+/* =========================================================
    CSV HEADER PARSING
 ========================================================= */
 
@@ -50,16 +57,14 @@ function populateDropdowns(headers) {
 }
 
 /* =========================================================
-   SCENARIO LOGIC (AUTHORITATIVE)
+   SCENARIO LOGIC
 ========================================================= */
 
 function applyScenarioRules() {
     if (scenarioSelect.value === "sparse") {
-        // Sparse → spacing REQUIRED
         spacingInput.disabled = false;
         spacingSection.style.opacity = "1";
     } else {
-        // Explicit → spacing FORBIDDEN
         spacingInput.disabled = true;
         spacingInput.value = "";
         spacingSection.style.opacity = "0.4";
@@ -67,8 +72,6 @@ function applyScenarioRules() {
 }
 
 scenarioSelect.addEventListener("change", applyScenarioRules);
-
-// Apply rules on initial load
 applyScenarioRules();
 
 /* =========================================================
@@ -94,20 +97,31 @@ createJobBtn.addEventListener("click", async () => {
     formData.append("value_column", valueSelect.value);
 
     if (scenarioSelect.value === "sparse") {
-        formData.append("station_spacing", spacingInput.value);
+        formData.append(
+            "station_spacing",
+            Number(spacingInput.value)
+        );
     }
 
-    jobStatusEl.textContent = "Running...";
+    jobStatusEl.textContent = "RUNNING";
     resultActions.classList.add("hidden");
     clearPlot();
 
-    const res = await fetch("/jobs", {
-        method: "POST",
-        body: formData
-    });
+    let res;
+    try {
+        res = await fetch(`${API_BASE}/jobs`, {
+            method: "POST",
+            body: formData
+        });
+    } catch (err) {
+        alert("Backend unreachable");
+        return;
+    }
 
     if (!res.ok) {
-        alert("Job creation failed");
+        const text = await res.text();
+        console.error(text);
+        alert("Job creation failed. Check console.");
         return;
     }
 
@@ -123,7 +137,7 @@ createJobBtn.addEventListener("click", async () => {
 function startPolling() {
     stopPolling();
     pollInterval = setInterval(async () => {
-        const res = await fetch(`/jobs/${currentJobId}/status`);
+        const res = await fetch(`${API_BASE}/jobs/${currentJobId}/status`);
         if (!res.ok) return;
 
         const data = await res.json();
@@ -153,7 +167,7 @@ function stopPolling() {
 ========================================================= */
 
 downloadBtn.onclick = () => {
-    window.location.href = `/jobs/${currentJobId}/result.csv`;
+    window.location.href = `${API_BASE}/jobs/${currentJobId}/result.csv`;
 };
 
 /* =========================================================
@@ -161,8 +175,11 @@ downloadBtn.onclick = () => {
 ========================================================= */
 
 plotBtn.onclick = async () => {
-    const res = await fetch(`/jobs/${currentJobId}/result.json`);
-    if (!res.ok) return;
+    const res = await fetch(`${API_BASE}/jobs/${currentJobId}/result.json`);
+    if (!res.ok) {
+        alert("Plot data not available");
+        return;
+    }
 
     const rows = await res.json();
 
@@ -177,33 +194,20 @@ plotBtn.onclick = async () => {
             x: measured.map(r => r.distance_along),
             y: measured.map(r => r.magnetic_value),
             mode: "markers",
-            name: "Measured",
-            marker: { color: "#3b82f6", size: 8 }
+            name: "Measured"
         },
         {
             x: predicted.map(r => r.distance_along),
             y: predicted.map(r => r.magnetic_value),
             mode: "markers",
-            name: "Predicted",
-            marker: {
-                color: "#3b82f6",
-                size: 8,
-                symbol: "circle-open",
-                line: { width: 2 }
-            }
+            name: "Predicted"
         }
     ], {
         paper_bgcolor: "#0e1117",
         plot_bgcolor: "#0e1117",
         font: { color: "#e5e7eb" },
-        xaxis: {
-            title: "Distance along traverse",
-            gridcolor: "#1f2937"
-        },
-        yaxis: {
-            title: "Magnetic value",
-            gridcolor: "#1f2937"
-        }
+        xaxis: { title: "Distance along traverse" },
+        yaxis: { title: "Magnetic value" }
     });
 };
 

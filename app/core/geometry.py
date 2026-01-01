@@ -17,7 +17,7 @@ def compute_distance_along(
     Rules:
     - Uses row order as traverse order
     - First row has distance_along = 0
-    - distance_along is always recomputed
+    - distance_along is ALWAYS recomputed
     """
 
     distance = 0.0
@@ -31,7 +31,7 @@ def compute_distance_along(
         if prev_x is not None:
             distance += hypot(x - prev_x, y - prev_y)
 
-        r["distance_along"] = distance
+        r["distance_along"] = round(distance, 6)
 
         prev_x = x
         prev_y = y
@@ -40,55 +40,61 @@ def compute_distance_along(
 
 
 # ==================================================
-# Sparse geometry
+# Sparse geometry (CORRECT)
 # ==================================================
 def generate_sparse_geometry(
-    rows: List[Dict],
+    measured_rows: List[Dict],
     *,
     spacing: float,
     value_col: str,
 ) -> List[Dict]:
     """
-    Generates uniformly spaced unmeasured stations along a traverse.
+    Generates uniformly spaced unmeasured stations while
+    preserving ALL measured stations.
 
-    Assumptions:
-    - rows already contain distance_along
-    - rows are measured points only
-    - rows are ordered by distance_along
+    Guarantees:
+    - No measured station is ever dropped
+    - Generated stations fill gaps BETWEEN measured stations
+    - distance_along is the single merge key
     """
 
     if spacing <= 0:
         raise ValueError("spacing must be > 0")
 
-    # Ensure ordering
-    rows = sorted(rows, key=lambda r: r["distance_along"])
+    if len(measured_rows) < 2:
+        raise ValueError("At least two measured points are required")
+
+    # Ensure measured rows are ordered
+    measured = sorted(
+        measured_rows,
+        key=lambda r: r["distance_along"],
+    )
 
     out: List[Dict] = []
 
-    max_d = rows[-1]["distance_along"]
-    d = 0.0
-    idx = 0
+    for i in range(len(measured) - 1):
+        left = measured[i]
+        right = measured[i + 1]
 
-    while d <= max_d:
-        # Advance to surrounding measured points
-        while (
-            idx + 1 < len(rows)
-            and rows[idx + 1]["distance_along"] < d
-        ):
-            idx += 1
+        d_left = left["distance_along"]
+        d_right = right["distance_along"]
 
-        # Exact measured station
-        if rows[idx]["distance_along"] == d:
-            out.append(rows[idx])
-        else:
+        # Always keep the left measured point
+        out.append(left)
+
+        # Fill gap with synthetic points
+        d = d_left + spacing
+        while d < d_right:
             out.append(
                 {
-                    "distance_along": d,
+                    "distance_along": round(d, 6),
                     value_col: "",
                     "is_measured": False,
                 }
             )
+            d += spacing
 
-        d += spacing
+    # Always keep the final measured point
+    out.append(measured[-1])
 
     return out

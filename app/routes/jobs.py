@@ -9,8 +9,8 @@ from fastapi import (
     HTTPException,
 )
 
-from app.core.job_store import get_job_record
 from app.core.job_runner import JobRunner
+from app.core.job_store import get_job_record
 from app.schemas.job import JobCreateRequest, Scenario
 
 
@@ -29,11 +29,17 @@ async def create_job(
     y_column: str = Form(...),
     value_column: str = Form(...),
 
-    # required only for sparse
+    # required only for sparse geometry
     station_spacing: Optional[float] = Form(None),
 ):
+    # --------------------------------------------------
+    # Basic validation
+    # --------------------------------------------------
     if not csv_file.filename.endswith(".csv"):
-        raise HTTPException(status_code=400, detail="Only CSV files are allowed")
+        raise HTTPException(
+            status_code=400,
+            detail="Only CSV files are allowed",
+        )
 
     if scenario == Scenario.sparse and station_spacing is None:
         raise HTTPException(
@@ -41,6 +47,9 @@ async def create_job(
             detail="station_spacing is required for sparse geometry",
         )
 
+    # --------------------------------------------------
+    # Job identity
+    # --------------------------------------------------
     job_id = f"gaia-{uuid.uuid4().hex}"
 
     request = JobCreateRequest(
@@ -51,8 +60,12 @@ async def create_job(
         station_spacing=station_spacing,
     )
 
-    runner = JobRunner(job_id)
-    await runner.run(csv_file, request)
+    # --------------------------------------------------
+    # Orchestration
+    # --------------------------------------------------
+    runner = JobRunner()
+    await runner.prepare(job_id, csv_file, request)
+    runner.run(job_id)
 
     return {
         "job_id": job_id,

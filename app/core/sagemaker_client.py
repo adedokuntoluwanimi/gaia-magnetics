@@ -3,12 +3,7 @@ import boto3
 from app.core.config import settings
 
 
-class SageMakerClient:
-    """
-    Handles SageMaker Batch Transform jobs for GAIA Magnetics.
-    One job = one traverse = one transform job.
-    """
-
+class SageMakerBatchClient:
     def __init__(self):
         self.sm = boto3.client(
             "sagemaker",
@@ -17,41 +12,25 @@ class SageMakerClient:
 
     def run_batch_transform(
         self,
+        *,
         job_id: str,
-        train_s3_prefix: str,
-        predict_s3_prefix: str,
+        input_s3_prefix: str,
         output_s3_prefix: str,
-    ):
+    ) -> None:
         """
-        Launches a Batch Transform job.
-
-        Expected S3 layout BEFORE job:
-          train_s3_prefix/train.csv
-          predict_s3_prefix/predict.csv
-
-        Output AFTER job:
-          output_s3_prefix/predictions.csv
+        Launches a SageMaker Batch Transform job and blocks until completion.
         """
 
-        transform_job_name = f"{job_id}-transform"
-
-        print("SETTINGS DIR:", dir(settings))
-        print("SETTINGS TYPE:", type(settings))
-        print("SETTINGS DIR:", dir(settings))
-
-
+        transform_job_name = f"gaia-batch-{job_id}"
 
         self.sm.create_transform_job(
             TransformJobName=transform_job_name,
             ModelName=settings.sagemaker_model_name,
-            MaxConcurrentTransforms=1,
-            MaxPayloadInMB=10,
-            BatchStrategy="SingleRecord",
             TransformInput={
                 "DataSource": {
                     "S3DataSource": {
                         "S3DataType": "S3Prefix",
-                        "S3Uri": predict_s3_prefix,
+                        "S3Uri": input_s3_prefix,
                     }
                 },
                 "ContentType": "text/csv",
@@ -59,42 +38,33 @@ class SageMakerClient:
             },
             TransformOutput={
                 "S3OutputPath": output_s3_prefix,
-                "AssembleWith": "None",
+                "Accept": "text/csv",
             },
             TransformResources={
-                "InstanceType": "ml.c4.8xlarge",
+                "InstanceType": "ml.c4.xlarge",
                 "InstanceCount": 1,
-            },
-            Environment={
-                # Tell container where train data lives
-                "TRAIN_S3_PREFIX": train_s3_prefix,
             },
         )
 
-        return transform_job_name
+        self._wait_for_completion(transform_job_name)
 
-    def wait_for_transform(self, transform_job_name: str, timeout: int = 1800):
+    def _wait_for_completion(self, transform_job_name: str) -> None:
         """
-        Polls SageMaker until the transform job completes or fails.
+        Polls SageMaker until the transform job finishes.
         """
-        start = time.time()
-
         while True:
-            resp = self.sm.describe_transform_job(
+            response = self.sm.describe_transform_job(
                 TransformJobName=transform_job_name
             )
-            status = resp["TransformJobStatus"]
+            status = response["TransformJobStatus"]
 
             if status == "Completed":
                 return
 
-            if status == "Failed":
-                reason = resp.get("FailureReason", "Unknown")
+            if status in ("Failed", "Stopped"):
+                reason = response.get("FailureReason", "unknown")
                 raise RuntimeError(
-                    f"Batch Transform failed: {reason}"
+                    f"Batch transform failed: {status} | {reason}"
                 )
-
-            if time.time() - start > timeout:
-                raise TimeoutError("Batch Transform timed out")
 
             time.sleep(10)

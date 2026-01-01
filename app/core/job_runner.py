@@ -1,171 +1,67 @@
-import csv
-import time
-from typing import List, Dict
-
-from app.schemas.job import JobCreateRequest, JobStatus
-from app.core.geometry import (
-    compute_distance_along_traverse,
-    generate_sparse_geometry,
-)
-from app.core.csv_splitter import split_train_predict
-from app.core.s3_io import (
-    upload_raw_csv,
-    download_csv,
-    object_exists,
-)
-from app.core.job_store import (
-    create_job_record,
-    update_job_status,
-)
-from app.core.sagemaker_client import SageMakerClient
-from app.core.merge import merge_predictions
-from app.core.config import settings
+from pathlib import Path
+from app.core.s3_io import S3IO
+from app.core.sagemaker_client import SageMakerBatchClient
+from app.core.merge import merge_job_results
 
 
 class JobRunner:
     """
-    Executes a GAIA Magnetics job using SageMaker Batch Transform.
-    One job = one traverse = one transform job.
+    Orchestrates a single GAIA Magnetics job.
+    One job = one traverse = one Batch Transform.
     """
 
-    def __init__(self, job_id: str):
-        self.job_id = job_id
+    def __init__(self):
+        self.s3 = S3IO()
+        self.sm = SageMakerBatchClient()
 
-    async def run(self, csv_file, request: JobCreateRequest):
+    def run(self, job_id: str) -> None:
+        """
+        Full execution of a GAIA job.
+        """
+
         # --------------------------------------------------
-        # 0. Create job record
+        # S3 prefixes (avoids string duplication)
         # --------------------------------------------------
-        create_job_record(self.job_id)
-        update_job_status(self.job_id, JobStatus.running)
+        input_prefix = f"s3://{self.s3.bucket}/jobs/{job_id}/input/"
+        output_prefix = f"s3://{self.s3.bucket}/jobs/{job_id}/raw-output/"
 
-        try:
-            # --------------------------------------------------
-            # 1. Read and store uploaded CSV
-            # --------------------------------------------------
-            raw = await csv_file.read()
-            upload_raw_csv(
-                job_id=self.job_id,
-                content=raw,
-                filename="input/uploaded.csv",
-            )
-
-            rows = self._parse_csv(raw)
-
-            # --------------------------------------------------
-            # 2. Compute distance_along
-            # --------------------------------------------------
-            rows = compute_distance_along_traverse(
-                rows,
-                x_col=request.x_column,
-                y_col=request.y_column,
-            )
-
-            # --------------------------------------------------
-            # 3. Geometry handling
-            # --------------------------------------------------
-            if request.scenario == "sparse":
-                rows = generate_sparse_geometry(
-                    rows,
-                    x_col=request.x_column,
-                    y_col=request.y_column,
-                    value_col=request.value_column,
-                    spacing=request.station_spacing,
-                )
-            else:
-                for r in rows:
-                    r["is_measured"] = (
-                        r.get(request.value_column) not in ("", None)
-                    )
-
-            # --------------------------------------------------
-            # 4. Split train / predict
-            # --------------------------------------------------
-            train_rows, predict_rows = split_train_predict(
-                rows,
-                value_col=request.value_column,
-            )
-
-            if not train_rows:
-                raise ValueError("No measured rows for training")
-
-            if not predict_rows:
-                raise ValueError("No rows to predict")
-
-            self._upload_csv("input/train.csv", train_rows)
-            self._upload_csv("input/predict.csv", predict_rows)
-
-            # --------------------------------------------------
-            # 5. Run Batch Transform
-            # --------------------------------------------------
-            sm = SageMakerClient()
-            bucket = settings.s3_bucket
-            job = self.job_id
-
-            train_prefix = f"s3://{bucket}/jobs/{job}/input/train/"
-            predict_prefix = f"s3://{bucket}/jobs/{job}/input/predict/"
-            output_prefix = f"s3://{bucket}/jobs/{job}/inference/"
-
-            transform_job_name = sm.run_batch_transform(
-                job_id=job,
-                train_s3_prefix=train_prefix,
-                predict_s3_prefix=predict_prefix,
-                output_s3_prefix=output_prefix,
-            )
-
-            sm.wait_for_transform(transform_job_name)
-
-            # --------------------------------------------------
-            # 6. Fetch predictions
-            # --------------------------------------------------
-            # Batch Transform writes files with arbitrary names.
-            # We assume a single output file and normalize it.
-            output_key = "inference/predictions.csv"
-
-            if not object_exists(job, output_key):
-                # Fallback: read first object under inference/
-                raw_pred = download_csv(job, "inference/")
-                upload_raw_csv(
-                    job_id=job,
-                    content=raw_pred,
-                    filename=output_key,
-                )
-
-            preds_raw = download_csv(job, output_key)
-            predictions = self._parse_csv(preds_raw)
-
-            # --------------------------------------------------
-            # 7. Merge predictions
-            # --------------------------------------------------
-            final_rows = merge_predictions(
-                geometry_rows=rows,
-                predictions_rows=predictions,
-                value_col=request.value_column,
-            )
-
-            self._upload_csv("output/final.csv", final_rows)
-
-            update_job_status(self.job_id, JobStatus.completed)
-
-        except Exception:
-            update_job_status(self.job_id, JobStatus.failed)
-            raise
-
-    # --------------------------------------------------
-    # Helpers
-    # --------------------------------------------------
-
-    def _parse_csv(self, raw: bytes) -> List[Dict]:
-        text = raw.decode("utf-8").splitlines()
-        return list(csv.DictReader(text))
-
-    def _upload_csv(self, path: str, rows: List[Dict]):
-        headers = rows[0].keys()
-        lines = [",".join(headers)]
-        for r in rows:
-            lines.append(",".join(str(r.get(h, "")) for h in headers))
-
-        upload_raw_csv(
-            job_id=self.job_id,
-            content="\n".join(lines).encode(),
-            filename=path,
+        # --------------------------------------------------
+        # Stage 3–4: Batch Transform
+        # --------------------------------------------------
+        self.sm.run_batch_transform(
+            job_id=job_id,
+            input_s3_prefix=input_prefix,
+            output_s3_prefix=output_prefix,
         )
+
+        # --------------------------------------------------
+        # Stage 5: Normalize predictions
+        # --------------------------------------------------
+        self._normalize_predictions(job_id)
+
+        # --------------------------------------------------
+        # Stage 6: Merge + final output
+        # --------------------------------------------------
+        merge_job_results(job_id)
+
+    def _normalize_predictions(self, job_id: str) -> None:
+        """
+        Converts SageMaker output to inference/predictions.csv
+        """
+
+        local_dir = Path("data") / job_id / "inference"
+        local_dir.mkdir(parents=True, exist_ok=True)
+
+        # SageMaker writes one or more part files
+        self.s3.download_prefix(
+            f"jobs/{job_id}/raw-output/",
+            local_dir,
+        )
+
+        part_files = list(local_dir.glob("*.csv"))
+        if not part_files:
+            raise RuntimeError("No predictions returned from Batch Transform")
+
+        # Deterministic output
+        final_path = local_dir / "predictions.csv"
+        part_files[0].replace(final_path)
